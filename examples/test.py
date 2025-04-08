@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 
 if __name__ == "__main__":
     # test discretization of multivariate normal distribution via grids
-    grid  = Grid([torch.linspace(0, 1, 5), torch.tensor([0., 2., 4.])])
+    grid = Grid([torch.linspace(0, 1, 5), torch.tensor([0., 2., 4.])])
     grid2 = Grid.from_shape((5, 3), torch.tensor([[0., 1.], [0., 4.]]))
 
     norm = dd.MultivariateNormal(loc=torch.zeros(2), covariance_matrix=torch.diag(torch.tensor([1.,2.])))
@@ -33,9 +33,9 @@ if __name__ == "__main__":
 
     # test wasserstein distances
     num_locs = 10
-    locs = OPTIMAL_1D_GRIDS['locs'][num_locs]
-    w2 = calculate_w2_disc_uni_stand_normal(locs)
-    w2_formal = OPTIMAL_1D_GRIDS['w2'][num_locs]
+    locs = OPTIMAL_1D_GRIDS['locs'][num_locs]  # optimal grid gaussian 1d for given locations
+    w2 = calculate_w2_disc_uni_stand_normal(locs)  # w2 for a standard gaussian 1d for given locations
+    w2_formal = OPTIMAL_1D_GRIDS['w2'][num_locs]  # E - wat is difference in w2 error here?
 
     # test mixture
     batch_size = torch.Size()
@@ -48,11 +48,12 @@ if __name__ == "__main__":
     gmm = dd.MixtureMultivariateNormal(mixture_distribution, component_distribution)
     first_elem_gmm = gmm[0]
 
-    gmm = dd.compress_mixture_multivariate_normal(gmm, n_max=3)
+    gmm = dd.compress_mixture_multivariate_normal(gmm, n_max=3)  # E - so we can already 'compress' distributions via
+    # k-means, but now it's when does it happen and how do we add shelling?
 
     # -- Create the optimal signature with a grid configuration from a multivariate Normal distribution: ---------------
     nr_dims = 2
-    batch_size = (2, 1)
+    batch_size = (2, 1)  # E- why this batch size?
 
     # example 1: identical batches of 2d Gaussians with diagonal covariance matrices
     mean = torch.zeros(nr_dims).unsqueeze(0).expand(batch_size + (nr_dims,))

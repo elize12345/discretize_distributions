@@ -56,6 +56,14 @@ class Grid:
             upper_vertices_per_dim.append(upper)
         return lower_vertices_per_dim, upper_vertices_per_dim
 
+    def shell(self):
+        """Computes the shell and core"""
+        grid_points = self.get_locs()  # (N.d) locations
+        n_dims = len(grid_points[1])
+        shell_points = []
+        core = []
+
+
     def __len__(self):
         return int(torch.tensor(self.shape).prod().item())
 
