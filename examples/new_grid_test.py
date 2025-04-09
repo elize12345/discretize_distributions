@@ -15,22 +15,19 @@ def generate_covariance_matrix(eigenvalues, eigenvectors, scale=1.0):
 if __name__ == "__main__":
 
     num_dims = 2
-    num_mix_elems0 = 5
+    num_mix_elems0 = 3
     batch_size = torch.Size()
     torch.manual_seed(0)
-    ref_eigenvectors = torch.eye(num_dims)  # just identity matrix for now
-    covariance_matrix_list = []
 
-    for i in range(num_mix_elems0):
-        eigenvalues = torch.abs(torch.randn(num_dims))
-        cov_matrix = generate_covariance_matrix(eigenvalues, ref_eigenvectors)
-        covariance_matrix_list.append(cov_matrix)
+    # only diagonal and pos def covariance matrices
+    covariance_diag = torch.exp(torch.randn(batch_size + (num_mix_elems0, num_dims,)))
+    covariance_matrix = torch.diag_embed(covariance_diag)
 
-    covariance_matrix = torch.stack(covariance_matrix_list)
     loc = torch.randn(batch_size + (num_mix_elems0, num_dims,))
     probs = torch.rand(batch_size + (num_mix_elems0,))
     probs = probs / probs.sum(dim=-1, keepdim=True)
 
+    # creates gmm with only diagonal covariances
     gmm = dd.MixtureMultivariateNormal(
         mixture_distribution=torch.distributions.Categorical(probs=probs),
         component_distribution=dd.MultivariateNormal(
@@ -47,21 +44,32 @@ if __name__ == "__main__":
 
     # voronoi plot
     vor = Voronoi(grid_gmm)
+    fig1 = voronoi_plot_2d(vor)
+    plt.show()
+
+    # compress GMM to gaussian - but this collapse function does not respect diagonal covariances
+    gmm_compressed = dd.compress_mixture_multivariate_normal(gmm, n_max=1)  # gaussian
+
+    # instead, for now: average values for covariance and mean of 3 components approximated by 1 gaussian
+    # cov matrix has shape [num_mix_elems0, num_dims, num_dims]
+    cov_avg = (probs.view(-1, 1, 1) * covariance_matrix).sum(dim=0)  # [1, num_dims,num_dims]
+    loc_avg = (probs.unsqueeze(1) * loc).sum(dim=0)  # [1, num_dims]
+    g = dd.MultivariateNormal(loc=loc_avg, covariance_matrix=cov_avg * (1 / (np.sqrt(num_dims))))
+
+    disc_g = dd.discretization_generator(gmm_compressed, num_locs=100)  # discretize using optimal grid
+    locs_g = disc_g.locs.squeeze(0)  # (1,locs,dims) --> (locs,dims)
+    # grid_g = locs_g.squeeze(0).detach().numpy()  # grid for gaussian approx of gmm
+    grid_list = [locs_g[:, i] for i in range(locs_g.shape[1])]
+    grid_g = Grid(locs_per_dim=grid_list)
+
+    vor = Voronoi(locs_g.detach().numpy())
     fig2 = voronoi_plot_2d(vor)
     plt.show()
 
-    # compress GMM to gaussian
-    gmm_compressed = dd.compress_mixture_multivariate_normal(gmm, n_max=1)  # gaussian
-    # find new grid for gaussian
-    disc_g = dd.discretization_generator(gmm_compressed, num_locs=100)  # discretize using optimal grid
-    locs_g = disc_g.locs
-    grid_g = locs_g.detach().numpy()  # grid for gaussian approx of gmm
-
-    vor = Voronoi(grid_g)
-    fig3 = voronoi_plot_2d(vor)
-    plt.show()
-
-    # new w2 error using this grid and the compressed gmm ? why not original dist?
-    # for discretize_multi_norm_dist must be a gaussian and diag covariance
-    locs, probs, w2 = dd.discretize_multi_norm_dist(gmm_compressed, grid=grid_g)
+    # need gmm to be described by just 1 covariance matrix
+    locs, probs, w2 = dd.discretize_mixture_multi_norm_dist(gmm, grid=grid_g)
     print(f'W2 error: {disc_g.w2}')
+
+
+
+

@@ -8,13 +8,14 @@ import os
 
 import discretize_distributions.utils as utils
 from discretize_distributions.distributions.multivariate_normal import MultivariateNormal
+from discretize_distributions.distributions.mixture import MixtureMultivariateNormal
 from discretize_distributions.grid import Grid
 import discretize_distributions.tensors as tensors
 
 GRID_CONFIGS = utils.pickle_load(pkg_resources.resource_filename(__name__,
-                                                           f'data{os.sep}lookup_grid_config.pickle'))
+                                                                 f'data{os.sep}lookup_grid_config.pickle'))
 OPTIMAL_1D_GRIDS = utils.pickle_load(pkg_resources.resource_filename(__name__,
-                                                               f'data{os.sep}lookup_opt_grid_uni_stand_normal.pickle'))
+                                                                     f'data{os.sep}lookup_opt_grid_uni_stand_normal.pickle'))
 
 PRECISION = torch.finfo(torch.float32).eps
 CONST_SQRT_2 = math.sqrt(2)
@@ -23,8 +24,8 @@ CONST_INV_SQRT_2 = 1 / math.sqrt(2)
 CONST_LOG_INV_SQRT_2PI = math.log(CONST_INV_SQRT_2PI)
 CONST_LOG_SQRT_2PI_E = 0.5 * math.log(2 * math.pi * math.e)
 
-
-__all__ = ['discretize_multi_norm_dist']
+__all__ = ['discretize_multi_norm_dist',
+           'discretize_mixture_multi_norm_dist']
 
 
 def discretize_multi_norm_dist(
@@ -49,9 +50,34 @@ def discretize_multi_norm_dist(
         raise ValueError('Either num_locs or grid must be provided')
 
 
+def discretize_mixture_multi_norm_dist(
+        norm: MixtureMultivariateNormal,
+        num_locs: Optional[int] = None,
+        grid: Optional[Grid] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if num_locs is not None:  # not sure if this is how can I use it
+        # return (DiscretizedMixtureMultivariateNormal(norm, num_locs).locs,
+        #         DiscretizedMixtureMultivariateNormal(norm, num_locs).probs,
+        #         DiscretizedMixtureMultivariateNormal(norm, num_locs).w2)
+        raise ValueError('not possible yet')
+    elif grid is not None:
+        w2 = grid_discretize_mixture_multi_norm_dist(norm, grid)
+        locs = grid.get_locs()
+
+        # I believe this stays the same
+        probs_per_dim = [utils.cdf(grid.upper_vertices_per_dim[dim]) - utils.cdf(grid.lower_vertices_per_dim[dim])
+                         for dim in range(grid.dim)]
+        mesh = torch.meshgrid(*probs_per_dim, indexing='ij')
+        stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
+        probs = stacked.prod(-1)
+
+        return locs, probs, w2
+    else:
+        raise ValueError('Either num_locs or grid must be provided')
+
+
 def grid_discretize_multi_norm_dist(
-    norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
-    grid: Grid) -> torch.Tensor:
+        norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
+        grid: Grid) -> torch.Tensor:
     if not tensors.is_mat_diag(norm.covariance_matrix):
         raise NotImplementedError('Only implemented for diagonal covariance matrices')
     assert norm.batch_shape.numel() == 1, 'batches not yet supported'
@@ -60,6 +86,35 @@ def grid_discretize_multi_norm_dist(
     scaled_locs_per_dim = [grid.locs_per_dim[dim] / norm.variance[dim] for dim in range(grid.dim)]
     w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
     return torch.stack(w2_per_dim).sum()
+
+
+def grid_discretize_mixture_multi_norm_dist(
+        norm: MixtureMultivariateNormal,
+        grid: Grid) -> torch.Tensor:
+    # if not tensors.is_mat_diag(norm.covariance_matrix):
+    #     raise NotImplementedError('Only implemented for diagonal covariance matrices')
+    assert norm.batch_shape.numel() == 1, 'batches not yet supported'
+    assert len(norm.event_shape) == 1 and norm.event_shape[0] == grid.dim, 'dimensions grid and norm should match'
+
+    w2_list = []
+
+    for m in range(grid.dim):  # for all points k in dim m
+        integral = (utils.cdf((grid.upper_vertices_per_dim[m] + grid.locs_per_dim[m]))
+                    - utils.cdf((grid.lower_vertices_per_dim[m] + grid.locs_per_dim[m])))  # (N,)
+
+        prob_prod = torch.ones_like(integral)  # one size (N,)
+
+        for j in range(grid.dim):
+            if j != m:  # for each dim m the product sum of other
+                prob = (utils.cdf(grid.upper_vertices_per_dim[j]) - utils.cdf(grid.lower_vertices_per_dim[j]))  # (N,)
+                prob_prod = prob_prod * prob
+
+        w2_per_dim = integral * prob_prod  # (N,)
+        w2_list.append(w2_per_dim.sum())
+
+    w2 = torch.stack(w2_list).sum()
+
+    return w2
 
 
 def optimal_discretize_multi_norm_dist(
@@ -75,7 +130,7 @@ def optimal_discretize_multi_norm_dist(
     # Norm can be a degenerate Gaussian. Hence, we work in the generate space of dimension neigh.
     cov_mat_xitorch = LinearOperator.m(norm.covariance_matrix)
     neigh = torch.linalg.matrix_rank(norm.covariance_matrix, hermitian=True).min()
-    eigvals, eigvectors = symeig(cov_mat_xitorch, neig=neigh, mode='uppest') # shape eigvals: (..., event_shape, neigh)
+    eigvals, eigvectors = symeig(cov_mat_xitorch, neig=neigh, mode='uppest')  # shape eigvals: (..., event_shape, neigh)
 
     discr_grid_config = get_optimal_grid_config(eigvals=eigvals, num_locs=num_locs)
     num_locs_realized = discr_grid_config.prod(-1)
@@ -141,7 +196,7 @@ def get_optimal_grid_config(eigvals: torch.Tensor, num_locs: int) -> torch.Tenso
         opt_config = torch.empty(batch_shape + (0,)).to(torch.int64)
     else:
         costs = GRID_CONFIGS[num_locs]['costs']
-        costs = torch.tensor(costs)[..., :neigh] # only select the grids that are relevant for the number of dimensions
+        costs = torch.tensor(costs)[..., :neigh]  # only select the grids that are relevant for the number of dimensions
         dims_configs = costs.shape[-1]
 
         objective = torch.einsum('ij,...j->...i', costs, eigvals.sort(descending=True).values[..., :dims_configs])
@@ -152,7 +207,8 @@ def get_optimal_grid_config(eigvals: torch.Tensor, num_locs: int) -> torch.Tenso
         opt_config = opt_config[..., :neigh]
 
     # append grid of size 1 to dimensions that are not yet included in the optimal grid.
-    opt_config = torch.cat((opt_config, torch.ones(batch_shape + (neigh - opt_config.shape[-1],)).to(opt_config.dtype)), dim=-1)
+    opt_config = torch.cat((opt_config, torch.ones(batch_shape + (neigh - opt_config.shape[-1],)).to(opt_config.dtype)),
+                           dim=-1)
     return opt_config
 
 
