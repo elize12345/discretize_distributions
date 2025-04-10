@@ -54,11 +54,9 @@ def discretize_mixture_multi_norm_dist(
         norm: MixtureMultivariateNormal,
         num_locs: Optional[int] = None,
         grid: Optional[Grid] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    if num_locs is not None:  # not sure if this is how can I use it
-        # return (DiscretizedMixtureMultivariateNormal(norm, num_locs).locs,
-        #         DiscretizedMixtureMultivariateNormal(norm, num_locs).probs,
-        #         DiscretizedMixtureMultivariateNormal(norm, num_locs).w2)
-        raise ValueError('not possible yet')
+    if num_locs is not None:  # circular import atm
+        # return discretization_generator(norm, num_locs)  # signature operator
+        return torch.Tensor(), torch.Tensor(), torch.Tensor()
     elif grid is not None:
         w2 = grid_discretize_mixture_multi_norm_dist(norm, grid)
         locs = grid.get_locs()
@@ -98,24 +96,34 @@ def grid_discretize_mixture_multi_norm_dist(
 
     w2_list = []
 
+    # standard cdf - wrong CDF - now did it per component - not sure?
     for m in range(grid.dim):  # for all points k in dim m
-        integral = (utils.cdf((grid.upper_vertices_per_dim[m] + grid.locs_per_dim[m]))
-                    - utils.cdf((grid.lower_vertices_per_dim[m] + grid.locs_per_dim[m])))  # (N,)
 
-        prob_prod = torch.ones_like(integral)  # one size (N,)
+        for n in range(norm.component_distribution.loc.shape[0]):
+            loc_i = norm.component_distribution.loc[n]  # (dim,)
+            cov_i = norm.component_distribution.covariance_matrix[n]  # (dim,dim)
+            std_i = torch.sqrt(torch.diagonal(cov_i))  # (dim,)
+
+            w2_per_dim_comp_sum = torch.zeros_like(grid.upper_vertices_per_dim[m])
+            integral = (utils.cdf((grid.upper_vertices_per_dim[m] + grid.locs_per_dim[m]), mu=loc_i[m], scale=std_i[m])
+                    - utils.cdf((grid.lower_vertices_per_dim[m] + grid.locs_per_dim[m]), mu=loc_i[m], scale=std_i[m]))  # (N,)
+            prob_prod = torch.ones_like(integral)  # one size (N,)
 
         for j in range(grid.dim):
             if j != m:  # for each dim m the product sum of other
-                prob = (utils.cdf(grid.upper_vertices_per_dim[j]) - utils.cdf(grid.lower_vertices_per_dim[j]))  # (N,)
+                prob = (utils.cdf(grid.upper_vertices_per_dim[j],mu=loc_i[j], scale=std_i[j]) - utils.cdf(grid.lower_vertices_per_dim[j],mu=loc_i[j], scale=std_i[j]))  # (N,)
                 prob_prod = prob_prod * prob
 
-        w2_per_dim = integral * prob_prod  # (N,)
-        w2_list.append(w2_per_dim.sum())
+        # weight it per component so total mass should be correct?
+        w2_per_dim_comp = norm.mixture_distribution.probs[n] * integral * prob_prod
+        w2_per_dim_comp_sum += w2_per_dim_comp  # sum over all components
 
-    w2 = torch.stack(w2_list).sum()
+        # summing over all locations N per dimension
+        w2_list.append(w2_per_dim_comp_sum.sum())  #(N,)
+
+    w2 = torch.stack(w2_list).sum()  # then list of w2 values for all dims, summed to one value
 
     return w2
-
 
 def optimal_discretize_multi_norm_dist(
         norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
