@@ -2,17 +2,18 @@ import torch
 import pkg_resources
 from xitorch.linalg import symeig
 from xitorch import LinearOperator
-from typing import Union
+from typing import Union, Optional, Tuple
 import math
 import os
 
-from .tensors import is_sym
-from .utils import pickle_load
+import discretize_distributions.utils as utils
 from discretize_distributions.distributions.multivariate_normal import MultivariateNormal
+from discretize_distributions.grid import Grid
+import discretize_distributions.tensors as tensors
 
-GRID_CONFIGS = pickle_load(pkg_resources.resource_filename(__name__,
+GRID_CONFIGS = utils.pickle_load(pkg_resources.resource_filename(__name__,
                                                            f'data{os.sep}lookup_grid_config.pickle'))
-OPTIMAL_1D_GRIDS = pickle_load(pkg_resources.resource_filename(__name__,
+OPTIMAL_1D_GRIDS = utils.pickle_load(pkg_resources.resource_filename(__name__,
                                                                f'data{os.sep}lookup_opt_grid_uni_stand_normal.pickle'))
 
 PRECISION = torch.finfo(torch.float32).eps
@@ -23,16 +24,54 @@ CONST_LOG_INV_SQRT_2PI = math.log(CONST_INV_SQRT_2PI)
 CONST_LOG_SQRT_2PI_E = 0.5 * math.log(2 * math.pi * math.e)
 
 
+__all__ = ['discretize_multi_norm_dist']
+
+
 def discretize_multi_norm_dist(
         norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
-        num_locs: int) -> tuple:
+        num_locs: Optional[int] = None,
+        grid: Optional[Grid] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if num_locs is not None:
+        return optimal_discretize_multi_norm_dist(norm, num_locs)
+    elif grid is not None:
+        return grid_discretize_multi_norm_dist(norm, grid)
+    else:
+        raise ValueError('Either num_locs or grid must be provided')
+
+
+def grid_discretize_multi_norm_dist(
+    norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
+    grid: Grid) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if not tensors.is_mat_diag(norm.covariance_matrix):
+        raise NotImplementedError('Only implemented for diagonal covariance matrices')
+    assert norm.batch_shape.numel() == 1, 'batches not yet supported'
+    assert len(norm.event_shape) == 1 and norm.event_shape[0] == grid.dim, 'dimensions grid and norm should match'
+
+    locs = grid.get_locs()
+
+    # probability computation, to be simplified:
+    probs_per_dim = [utils.cdf(grid.upper_vertices_per_dim[dim]) - utils.cdf(grid.lower_vertices_per_dim[dim])
+                     for dim in range(grid.dim)]
+    mesh = torch.meshgrid(*probs_per_dim, indexing='ij')
+    stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
+    probs = stacked.prod(-1)
+
+    scaled_locs_per_dim = [grid.locs_per_dim[dim] / norm.variance[dim] for dim in range(grid.dim)]
+    w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
+    w2 = torch.stack(w2_per_dim).sum()
+    return locs, probs, w2
+
+
+
+def optimal_discretize_multi_norm_dist(
+        norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
+        num_locs: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Discretize a multivariate normal distribution according to Algorithm 2 in https://arxiv.org/pdf/2407.18707
     :param norm: Multivariate Normal distribution to be discretized
     :param num_locs: Number of discretization locations
     :return: Tuple of discretized locations, probabilities, and the exact 2-Wasserstein error
     """
-    assert is_sym(norm.covariance_matrix)
 
     # Norm can be a degenerate Gaussian. Hence, we work in the generate space of dimension neigh.
     cov_mat_xitorch = LinearOperator.m(norm.covariance_matrix)
@@ -54,9 +93,12 @@ def discretize_multi_norm_dist(
 
         # Transform locs to original spaces
         S = torch.einsum('...on,...n->...no', eigvectors, (eigvals.clip(0, torch.inf) + PRECISION).sqrt())
-        S_topk = torch.gather(S, dim=-2, index=eigvals_topk.indices.unsqueeze(-1).expand(
+        S = torch.gather(S, dim=-2, index=eigvals_topk.indices.unsqueeze(-1).expand(
             norm.batch_shape + (neigh,) + norm.event_shape))
-        locs = transform_to_original_space(locs_stand, S_topk, norm.loc)
+        locs = torch.einsum('...no,...cn->...co', S, locs_stand) + norm.loc.unsqueeze(-2)
+
+        assert not torch.isnan(locs).any(), 'locs contain NaN values'
+        assert not torch.isinf(locs).any(), 'locs contain Inf values'
 
         # wasserstein computations
         mean_part = (trunc_mean - locs_stand).pow(2)
@@ -70,15 +112,6 @@ def discretize_multi_norm_dist(
         w2.mean(), w2_dirac_at_mean.mean(), probs.shape[-1]))
 
     return locs, probs, w2
-
-
-def transform_to_original_space(points: torch.Tensor, T: torch.Tensor, bias: torch.Tensor):
-    # split up matrix vector multiplication to ensure that inf*0 = 0. \Todo create more memory efficient method
-    points_original = torch.einsum('...no,...cn->...con', T, points)
-    points_original = torch.nan_to_num(points_original, nan=0., posinf=torch.inf, neginf=-torch.inf)
-    points_original = points_original.sum(-1)
-    points_original = points_original + bias.unsqueeze(-2)
-    return points_original
 
 
 def get_optimal_grid_config(eigvals: torch.Tensor, num_locs: int) -> torch.Tensor:
