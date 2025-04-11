@@ -1,8 +1,8 @@
 from .distributions import CategoricalFloat, MultivariateNormal, MixtureMultivariateNormal, \
-    cross_product_categorical_floats, DiscretizedMultivariateNormal, DiscretizedCategoricalFloat, \
+    cross_product_categorical_floats, DiscretizedMultivariateNormal, DiscretizedMixtureMultivariateNormalQuantization, DiscretizedCategoricalFloat, \
     DiscretizedMixtureMultivariateNormal, discretization_generator, compress_mixture_multivariate_normal, \
     compress_categorical_floats, unique_mixture_multivariate_normal
-from .discretize import discretize_multi_norm_dist, discretize_mixture_multi_norm_dist
+from .discretize import discretize_multi_norm_dist
 
 __all__ = [
     'CategoricalFloat',
@@ -10,12 +10,12 @@ __all__ = [
     'MixtureMultivariateNormal',
     'DiscretizedMultivariateNormal',
     'DiscretizedMixtureMultivariateNormal',
+    'DiscretizedMixtureMultivariateNormalQuantization',
     'DiscretizedCategoricalFloat',
     'cross_product_categorical_floats',
     'discretization_generator',
     'compress_mixture_multivariate_normal',
     'unique_mixture_multivariate_normal',
     'compress_categorical_floats',
-    'discretize_multi_norm_dist',
-    'discretize_mixture_multi_norm_dist'
+    'discretize_multi_norm_dist'
 ]

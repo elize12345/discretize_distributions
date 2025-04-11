@@ -5,6 +5,7 @@ from discretize_distributions.discretize import GRID_CONFIGS, OPTIMAL_1D_GRIDS
 from discretize_distributions.grid import Grid
 from matplotlib import pyplot as plt
 from scipy.spatial import Voronoi, voronoi_plot_2d
+from discretize_distributions.distributions import DiscretizedMixtureMultivariateNormal, DiscretizedMixtureMultivariateNormalQuantization
 import GMMWas
 import numpy as np
 
@@ -76,9 +77,18 @@ if __name__ == "__main__":
     fig2 = voronoi_plot_2d(vor)
     plt.show()
 
-    # original GMM described by grid of GMM approx
-    locs, probs, w2 = dd.discretize_mixture_multi_norm_dist(gmm, grid=grid_g)
-    print(f'W2 error: {disc_g.w2}')
+    grid1 = Grid.from_shape((5, 3), torch.tensor([[0., 1.], [0., 4.]]))
+
+    q = DiscretizedMixtureMultivariateNormalQuantization(gmm, num_locs=100, grid=grid_g)
+    w2 = q.w2
+    print(f'W2 error: {w2}')
+    p = DiscretizedMixtureMultivariateNormal(gmm, num_locs=100)
+    w2 = p.w2
+    locs = p.locs
+    probs = p.probs
+
+    print(f'W2 error: {w2}')
+
 
 
 

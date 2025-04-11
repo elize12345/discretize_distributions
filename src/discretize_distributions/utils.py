@@ -17,11 +17,6 @@ SQRT_2_DIV_SQRT_PI = SQRT_2 / SQRT_PI
 
 REPLACE_INF = 1e10
 
-import torch
-import math
-
-SQRT_2 = math.sqrt(2)
-
 
 def cdf(x: torch.Tensor, mu: torch.Tensor = 0., scale: torch.Tensor = 1.):
     """
@@ -32,25 +27,6 @@ def cdf(x: torch.Tensor, mu: torch.Tensor = 0., scale: torch.Tensor = 1.):
     :return:
     """
     return 0.5 * (1 + torch.erf((x - mu) / (SQRT_2 * scale)))
-
-
-def cdf(x: torch.Tensor, mu: torch.Tensor = 0., scale: torch.Tensor = 1.):
-    """
-    cdf normal distribution
-    :param x: input point
-    :param mu: mean
-    :param scale: standard deviation
-    :return:
-    """
-    return 0.5 * (1 + torch.erf((x - mu) / (SQRT_2 * scale)))
-
-
-def gmm_cdf(x: torch.Tensor, means: torch.Tensor, variances: torch.Tensor, weights: torch.Tensor):
-    std = torch.sqrt(variances)
-    component_cdfs = cdf(x.unsqueeze(-1), mu=means, scale=std)
-    mixture_cdf = torch.sum(weights * component_cdfs, dim=-1)
-    return mixture_cdf
-
 
 def inv_cdf(p: torch.Tensor, mu: torch.Tensor = 0., scale: torch.Tensor = 1.):
     """

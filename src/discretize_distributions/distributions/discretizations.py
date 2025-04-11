@@ -5,9 +5,11 @@ from discretize_distributions.distributions.multivariate_normal import Multivari
 from discretize_distributions.distributions.categorical_float import CategoricalFloat
 from discretize_distributions.distributions.mixture import MixtureMultivariateNormal
 from discretize_distributions.discretize import discretize_multi_norm_dist
+from discretize_distributions.grid import Grid
 
 __all__ = ['DiscretizedMultivariateNormal',
            'DiscretizedMixtureMultivariateNormal',
+           'DiscretizedMixtureMultivariateNormalQuantization',
            'DiscretizedCategoricalFloat',
            'discretization_generator'
            ]
@@ -53,6 +55,30 @@ class DiscretizedMixtureMultivariateNormal(Discretization):
                           disc_component_distribution.w2.pow(2)).sqrt()
 
         super().__init__(gmm, probs, locs, w2)
+
+class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
+    def __init__(self, gmm: MixtureMultivariateNormal, grid: Grid, **kwargs):
+        assert isinstance(gmm, MixtureMultivariateNormal), 'distribution not of type MixtureMultivariateNormal'
+
+        probs_mix = gmm.mixture_distribution.probs
+        locs = grid.get_locs()  # [num_locs, dim]
+        probs = torch.zeros(locs.shape[0])  # [num_locs,]
+        w2 = torch.zeros(locs.shape[0])  # [num_locs,]
+        # probs = []
+        # w2 = []
+        for p in range(len(probs_mix)):
+            component_p = MultivariateNormal(
+                loc=gmm.component_distribution.loc[p],
+                covariance_matrix=gmm.component_distribution.covariance_matrix[p]
+            )
+            _, probs_p, w2_p = discretize_multi_norm_dist(component_p, None, grid)
+            probs += probs_p * probs_mix[p]
+            w2 += (w2_p * probs_mix[p])
+
+        # w2 = torch.stack(w2, dim=0).sum()
+        # probs = torch.stack(probs, dim=0)
+
+        super().__init__(gmm, probs, locs, w2.sum())
 
 
 class DiscretizedCategoricalFloat(Discretization):
