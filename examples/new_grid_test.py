@@ -49,7 +49,7 @@ if __name__ == "__main__":
     disc_gmm = dd.discretization_generator(gmm, num_locs=100)
     locs_gmm = disc_gmm.locs
     grid_gmm = locs_gmm.detach().numpy()  # grid for gmm
-    print(f'W2 error: {disc_gmm.w2}')
+    print(f'W2 error original Signature operation: {disc_gmm.w2}')
 
     # voronoi plot
     vor = Voronoi(grid_gmm)
@@ -68,7 +68,6 @@ if __name__ == "__main__":
     disc_g = dd.discretization_generator(gaussian, num_locs=100)
     locs_g = disc_g.locs.squeeze(0)  # (1,locs,dims) --> (locs,dims)
     grid_list = [locs_g[:, i] for i in range(locs_g.shape[1])]
-
     # grid for gaussian approximation of GMM
     grid_g = Grid(locs_per_dim=grid_list)
 
@@ -77,17 +76,11 @@ if __name__ == "__main__":
     fig2 = voronoi_plot_2d(vor)
     plt.show()
 
-    grid1 = Grid.from_shape((5, 3), torch.tensor([[0., 1.], [0., 4.]]))
-
-    q = DiscretizedMixtureMultivariateNormalQuantization(gmm, num_locs=100, grid=grid_g)
+    grid1 = Grid.from_shape((10, 10), torch.tensor([[-6, 4], [-2, 4]]))
+    q = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=grid1)
     w2 = q.w2
-    print(f'W2 error: {w2}')
-    p = DiscretizedMixtureMultivariateNormal(gmm, num_locs=100)
-    w2 = p.w2
-    locs = p.locs
-    probs = p.probs
+    print(f'W2 error for Quantization: {w2.item()}')
 
-    print(f'W2 error: {w2}')
 
 
 

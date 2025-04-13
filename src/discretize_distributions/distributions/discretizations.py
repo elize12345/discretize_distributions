@@ -63,22 +63,31 @@ class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
         probs_mix = gmm.mixture_distribution.probs
         locs = grid.get_locs()  # [num_locs, dim]
         probs = torch.zeros(locs.shape[0])  # [num_locs,]
-        w2 = torch.zeros(locs.shape[0])  # [num_locs,]
-        # probs = []
-        # w2 = []
+        locs_p = gmm.component_distribution.loc
+        cov_p = gmm.component_distribution.covariance_matrix
+        w2 = torch.zeros(1)
+
         for p in range(len(probs_mix)):
             component_p = MultivariateNormal(
-                loc=gmm.component_distribution.loc[p],
-                covariance_matrix=gmm.component_distribution.covariance_matrix[p]
+                loc=locs_p[p],
+                covariance_matrix=cov_p[p]
             )
             _, probs_p, w2_p = discretize_multi_norm_dist(component_p, None, grid)
-            probs += probs_p * probs_mix[p]
-            w2 += (w2_p * probs_mix[p])
 
-        # w2 = torch.stack(w2, dim=0).sum()
-        # probs = torch.stack(probs, dim=0)
+            weight_p = probs_mix[p]
+            probs += probs_p * weight_p
+            w2 += w2_p * weight_p
 
-        super().__init__(gmm, probs, locs, w2.sum())
+        # batched version ?
+        # probs_mix = gmm.mixture_distribution.probs   # [num_components,]
+        # locs = grid.get_locs()  # [num_locs, dim]
+        # _, probs_p, w2_p = discretize_multi_norm_dist(gmm.component_distribution, None, grid)
+        # # probs_p shape [num_components, num_locs]
+        # # w2_p shape [num_components, num_locs]
+        # probs = torch.einsum('m,mn->n', probs_mix, probs_p)  # [num_locs]
+        # w2 = torch.einsum('m,mn->n', probs_mix, w2_p)  # [num_locs]
+
+        super().__init__(gmm, probs, locs, w2)
 
 
 class DiscretizedCategoricalFloat(Discretization):

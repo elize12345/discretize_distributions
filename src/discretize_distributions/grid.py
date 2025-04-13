@@ -15,7 +15,10 @@ class Grid:
         locs_per_dim: list of 1D torch tensors, each of shape (n_i,)
         Example: [torch.linspace(0, 1, 5), torch.tensor([0., 2., 4.])]
         """
-        self.locs_per_dim = locs_per_dim
+        # self.locs_per_dim = locs_per_dim
+        # to ensure sorting so no negative probabilities when taking cdf of upper and lower vertices,
+        # so ensures lower vertice < upper vertice in Voronoi partition calculation
+        self.locs_per_dim = [locs.sort().values for locs in locs_per_dim]
         self.dim = len(locs_per_dim)
         self.shape = tuple(len(p) for p in locs_per_dim)
 
