@@ -76,7 +76,7 @@ class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
 
             weight_p = probs_mix[p]
             probs += probs_p * weight_p
-            w2 += w2_p * weight_p
+            w2 += w2_p.pow(2) * weight_p
 
         # batched version ?
         # probs_mix = gmm.mixture_distribution.probs   # [num_components,]
@@ -87,7 +87,7 @@ class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
         # probs = torch.einsum('m,mn->n', probs_mix, probs_p)  # [num_locs]
         # w2 = torch.einsum('m,mn->n', probs_mix, w2_p)  # [num_locs]
 
-        super().__init__(gmm, probs, locs, w2)
+        super().__init__(gmm, probs, locs, w2.sqrt())
 
 
 class DiscretizedCategoricalFloat(Discretization):

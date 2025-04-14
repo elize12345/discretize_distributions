@@ -34,6 +34,7 @@ class Grid:
         """Returns meshgrid view (not flattened)."""
         return torch.meshgrid(*self.locs_per_dim, indexing=indexing)
 
+
     def get_locs(self):
         """Returns (N, d) tensor of all grid locs, computed lazily."""
         mesh = self.meshgrid()
