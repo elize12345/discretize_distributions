@@ -60,12 +60,25 @@ class Grid:
             upper_vertices_per_dim.append(upper)
         return lower_vertices_per_dim, upper_vertices_per_dim
 
-    def shell(self):
-        """Computes the shell and core"""
-        grid_points = self.get_locs()  # (N.d) locations
+    def shell(self, boundary):
+        """Computes the shell and core
+        param: boundary list of tensors for max, min values per dim of wanted shell
+        """
+        grid_points = self.get_locs()  # (N,d) locations
         n_dims = len(grid_points[1])
         shell_points = []
         core = []
+
+        for point in grid_points:
+            for dim in range(n_dims):
+                min, max = boundary[dim]
+                if point[dim] == min or point[dim == max]:
+                    shell_points.append(point)
+                elif (min <= point[dim] <= max):
+                    core.append(point)
+
+        return shell_points, core
+
 
 
     def __len__(self):
