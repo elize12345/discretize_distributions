@@ -24,17 +24,27 @@ def gmm_collapse(locs, covariance_matrix, probs):
 if __name__ == "__main__":
 
     num_dims = 2
-    num_mix_elems0 = 5
+    num_mix_elems0 = 2
     batch_size = torch.Size()
     torch.manual_seed(0)
+
+    user_choice = input(
+        "Choose GMM mode: type 'spread' for spread apart or 'overlap' for overlapping components: ").strip().lower()
+
+    if user_choice == 'spread':
+        locs = torch.tensor([[-2.0, -2.0], [2.0, 2.0]])
+    elif user_choice == 'overlap':
+        locs = torch.tensor([[0.0, 0.0], [1.0, 1.0]])
+    else:
+        raise ValueError("Invalid choice. Please type 'spread' or 'overlap'.")
+
+    # covariance_matrix = GMMWas.tensors.generate_pd_mat(batch_size + (num_mix_elems0, num_dims, num_dims))
+    # locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
 
     # only diagonal and pos def covariance matrices
     covariance_diag = torch.exp(torch.randn(batch_size + (num_mix_elems0, num_dims,)))
     covariance_matrix = torch.diag_embed(covariance_diag)
-    # covariance_matrix = GMMWas.tensors.generate_pd_mat(batch_size + (num_mix_elems0, num_dims, num_dims))
-    locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
-    # locs = torch.tensor([[-2, -2], [2, 2]])  # spread apart
-    # locs = torch.tensor([[0, 0], [1, 1]])
+
     probs = torch.rand(batch_size + (num_mix_elems0,))
     probs = probs / probs.sum(dim=-1, keepdim=True)
 
@@ -56,6 +66,7 @@ if __name__ == "__main__":
     # voronoi plot
     vor = Voronoi(grid_gmm)
     fig1 = voronoi_plot_2d(vor)
+    plt.title('Voronoi plot of Union of Signatures of GMM')
     plt.show()
 
     # take covariance of one of the components, choose one with higher weight
@@ -83,6 +94,7 @@ if __name__ == "__main__":
     grid = grid_uniform
     vor = Voronoi(grid.get_locs())
     fig2 = voronoi_plot_2d(vor)
+    plt.title('Voronoi plot of grid used in Quantization operator')
     plt.show()
 
     q = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=grid)
