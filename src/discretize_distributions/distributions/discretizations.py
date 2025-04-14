@@ -74,9 +74,9 @@ class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
             )
             _, probs_p, w2_p = discretize_multi_norm_dist(component_p, None, grid)
 
-            weight_p = probs_mix[p]
-            probs += probs_p * weight_p
-            w2 += w2_p.pow(2) * weight_p
+            pi = probs_mix[p]
+            probs += probs_p * pi  # has no point, the probs stay the same for the same grid
+            w2 += w2_p.pow(2) * pi
 
         # batched version ?
         # probs_mix = gmm.mixture_distribution.probs   # [num_components,]

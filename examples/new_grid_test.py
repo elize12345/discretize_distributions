@@ -24,22 +24,22 @@ def gmm_collapse(locs, covariance_matrix, probs):
 if __name__ == "__main__":
 
     num_dims = 2
-    num_mix_elems0 = 2
+    num_mix_elems0 = 3
     batch_size = torch.Size()
     torch.manual_seed(0)
 
-    user_choice = input(
-        "Choose GMM mode: type 'spread' for spread apart or 'overlap' for overlapping components: ").strip().lower()
-
-    if user_choice == 'spread':
-        locs = torch.tensor([[-2.0, -2.0], [2.0, 2.0]])
-    elif user_choice == 'overlap':
-        locs = torch.tensor([[0.0, 0.0], [1.0, 1.0]])
-    else:
-        raise ValueError("Invalid choice. Please type 'spread' or 'overlap'.")
+    # user_choice = input(
+    #     "Choose GMM mode: type 'spread' for spread apart or 'overlap' for overlapping components: ").strip().lower()
+    #
+    # if user_choice == 'spread':
+    #     locs = torch.tensor([[-2.0, -2.0], [2.0, 2.0]])
+    # elif user_choice == 'overlap':
+    #     locs = torch.tensor([[0.0, 0.0], [1.0, 1.0]])
+    # else:
+    #     raise ValueError("Invalid choice. Please type 'spread' or 'overlap'.")
 
     # covariance_matrix = GMMWas.tensors.generate_pd_mat(batch_size + (num_mix_elems0, num_dims, num_dims))
-    # locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
+    locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
 
     # only diagonal and pos def covariance matrices
     covariance_diag = torch.exp(torch.randn(batch_size + (num_mix_elems0, num_dims,)))
@@ -99,6 +99,7 @@ if __name__ == "__main__":
 
     q = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=grid)
     w2 = q.w2
+    print(q.probs)
     print(f'W2 error for Quantization: {w2.item()}')
 
 
