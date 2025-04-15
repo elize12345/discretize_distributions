@@ -17,12 +17,6 @@ def generate_covariance_matrix(eigenvalues, eigenvectors, scale=1.0):
     return cov_matrix * scale
 
 
-def gmm_collapse(locs, covariance_matrix, probs):
-    cov_avg = (probs.view(-1, 1, 1) * covariance_matrix).sum(dim=0, keepdim=True)  # [1, num_dims,num_dims]
-    loc_avg = (probs.unsqueeze(1) * locs).sum(dim=0, keepdim=True)  # [1, num_dims]
-    return dd.MultivariateNormal(loc=loc_avg, covariance_matrix=cov_avg)
-
-
 if __name__ == "__main__":
 
     num_dims = 2
