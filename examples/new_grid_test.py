@@ -81,7 +81,7 @@ if __name__ == "__main__":
     # using optimal grid from signature operator
     disc_g = dd.discretization_generator(gaussian, num_locs=100)
     locs_g = disc_g.locs.squeeze(0)  # (1,locs,dims) --> (locs,dims)
-    grid_list = [locs_g[:, i] for i in range(locs_g.shape[1])]
+    grid_list = [torch.sort(torch.unique(locs_g[:, i]))[0] for i in range(locs_g.shape[1])]
     # grid for gaussian approximation of GMM
     grid_g = Grid(locs_per_dim=grid_list)
 
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     grid_uniform = Grid.from_shape((10, 10), interval_per_dim)
 
     # Voronoi plot of grid
-    grid = grid_uniform
+    grid = grid_g
     vor = Voronoi(grid.get_locs())
     fig2 = voronoi_plot_2d(vor)
     plt.title('Voronoi plot of grid used in Quantization operator')

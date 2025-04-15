@@ -12,9 +12,9 @@ from discretize_distributions.grid import Grid
 import discretize_distributions.tensors as tensors
 
 GRID_CONFIGS = utils.pickle_load(pkg_resources.resource_filename(__name__,
-                                                           f'data{os.sep}lookup_grid_config.pickle'))
+                                                                 f'data{os.sep}lookup_grid_config.pickle'))
 OPTIMAL_1D_GRIDS = utils.pickle_load(pkg_resources.resource_filename(__name__,
-                                                               f'data{os.sep}lookup_opt_grid_uni_stand_normal.pickle'))
+                                                                     f'data{os.sep}lookup_opt_grid_uni_stand_normal.pickle'))
 
 PRECISION = torch.finfo(torch.float32).eps
 CONST_SQRT_2 = math.sqrt(2)
@@ -22,7 +22,6 @@ CONST_INV_SQRT_2PI = 1 / math.sqrt(2 * math.pi)
 CONST_INV_SQRT_2 = 1 / math.sqrt(2)
 CONST_LOG_INV_SQRT_2PI = math.log(CONST_INV_SQRT_2PI)
 CONST_LOG_SQRT_2PI_E = 0.5 * math.log(2 * math.pi * math.e)
-
 
 __all__ = ['discretize_multi_norm_dist']
 
@@ -40,8 +39,8 @@ def discretize_multi_norm_dist(
 
 
 def grid_discretize_multi_norm_dist(
-    norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
-    grid: Grid) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
+        grid: Grid) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if not tensors.is_mat_diag(norm.covariance_matrix):
         raise NotImplementedError('Only implemented for diagonal covariance matrices')
     assert norm.batch_shape.numel() == 1, 'batches not yet supported'
@@ -61,8 +60,6 @@ def grid_discretize_multi_norm_dist(
     w2 = torch.stack(w2_per_dim).pow(2).sum().sqrt()
     return locs, probs, w2
 
-
-
 def optimal_discretize_multi_norm_dist(
         norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
         num_locs: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -76,7 +73,7 @@ def optimal_discretize_multi_norm_dist(
     # Norm can be a degenerate Gaussian. Hence, we work in the generate space of dimension neigh.
     cov_mat_xitorch = LinearOperator.m(norm.covariance_matrix)
     neigh = torch.linalg.matrix_rank(norm.covariance_matrix, hermitian=True).min()
-    eigvals, eigvectors = symeig(cov_mat_xitorch, neig=neigh, mode='uppest') # shape eigvals: (..., event_shape, neigh)
+    eigvals, eigvectors = symeig(cov_mat_xitorch, neig=neigh, mode='uppest')  # shape eigvals: (..., event_shape, neigh)
 
     discr_grid_config = get_optimal_grid_config(eigvals=eigvals, num_locs=num_locs)
     num_locs_realized = discr_grid_config.prod(-1)
@@ -142,7 +139,7 @@ def get_optimal_grid_config(eigvals: torch.Tensor, num_locs: int) -> torch.Tenso
         opt_config = torch.empty(batch_shape + (0,)).to(torch.int64)
     else:
         costs = GRID_CONFIGS[num_locs]['costs']
-        costs = torch.tensor(costs)[..., :neigh] # only select the grids that are relevant for the number of dimensions
+        costs = torch.tensor(costs)[..., :neigh]  # only select the grids that are relevant for the number of dimensions
         dims_configs = costs.shape[-1]
 
         objective = torch.einsum('ij,...j->...i', costs, eigvals.sort(descending=True).values[..., :dims_configs])
@@ -153,7 +150,8 @@ def get_optimal_grid_config(eigvals: torch.Tensor, num_locs: int) -> torch.Tenso
         opt_config = opt_config[..., :neigh]
 
     # append grid of size 1 to dimensions that are not yet included in the optimal grid.
-    opt_config = torch.cat((opt_config, torch.ones(batch_shape + (neigh - opt_config.shape[-1],)).to(opt_config.dtype)), dim=-1)
+    opt_config = torch.cat((opt_config, torch.ones(batch_shape + (neigh - opt_config.shape[-1],)).to(opt_config.dtype)),
+                           dim=-1)
     return opt_config
 
 

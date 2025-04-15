@@ -1,7 +1,10 @@
 import torch
 from typing import Union
 from matplotlib import pyplot as plt, patches
-
+import discretize_distributions.utils as utils
+from discretize_distributions.distributions.multivariate_normal import MultivariateNormal
+import discretize_distributions.tensors as tensors
+import ot
 
 class GridCell:
     def __init__(self, loc: torch.Tensor, lower: torch.Tensor, upper: torch.Tensor):
@@ -64,36 +67,48 @@ class Grid:
     def voronoi_edge_shell(self, shell):
         """Finds the closest Voronoi edge to the input shell"""
         vor_shell = []
-        lower_vertices_per_dim, upper_vertices_per_dim = self._compute_voronoi_edges()
         # boundary = [
         #     (min_x, max_x),  # for x-dimension (dim=0)
         #     (min_y, max_y)  # for y-dimension (dim=1)
         # ]
-        for dim in range(len(shell)):
+        for dim in range(self.dim):
+            if (torch.any(torch.isclose(self.locs_per_dim[dim], self.lower_vertices_per_dim[dim])) or
+                    torch.any(torch.isclose(self.locs_per_dim[dim], self.upper_vertices_per_dim[dim]))):
+                print(f"Grid locs overlap lower Voronoi edges in dim {dim}")
+
             min_shell, max_shell = shell[dim]
-            lower = lower_vertices_per_dim[dim]
-            upper = upper_vertices_per_dim[dim]
+            lower = self.lower_vertices_per_dim[dim]
+            upper = self.upper_vertices_per_dim[dim]
 
             # index for closest edge to input shell
             lower_index = torch.argmin(torch.abs(lower - min_shell))
             upper_index = torch.argmin(torch.abs(upper - max_shell))
 
+            # this is for the largest lower edge ≤ shell_min and smallest upper edge ≥ shell_max
+
+            # this will give all values where boolean is True, if an edge is lower than the shell input
+            # lower_index = torch.nonzero(lower <= min_shell, as_tuple=True)[0]
+            # # then we select the last index which satisfies, so that is the max value the shell can be
+            # lower_index = lower_index[-1] if len(lower_index) > 0 else 0
+            # upper_index = torch.nonzero(upper >= max_shell, as_tuple=True)[0]
+            # upper_index = upper_index[0] if len(upper_index) > 0 else -1
+
             vor_shell_min = lower[lower_index]
             vor_shell_max = upper[upper_index]
             vor_shell.append((vor_shell_min, vor_shell_max))
 
-            # checking
-            min_matches = torch.any(torch.isclose(lower, vor_shell_min, atol=1e-6))
-            max_matches = torch.any(torch.isclose(upper, vor_shell_max, atol=1e-6))
-
-            if not (min_matches and max_matches):
-                print(f"Dimension {dim}: shell ({min_shell.item()}, {max_shell.item()}) not aligned with Voronoi edges.")
+            # check
+            # min_matches = torch.any(torch.isclose(lower, vor_shell_min, atol=1e-6))
+            # max_matches = torch.any(torch.isclose(upper, vor_shell_max, atol=1e-6))
+            #
+            # if not (min_matches and max_matches):
+            #     print(f"Dimension {dim}: shell ({min_shell.item()}, {max_shell.item()}) not aligned with Voronoi edges.")
 
         return vor_shell
 
     def shell(self, shell):
         """Computes the outer and core points based on input shell
-        param: input shell list of tensors for max, min values per dim of wanted shell
+        param: input 'shell' list of tensors for max, min values per dim of wanted shell
         """
         grid_points = self.get_locs()  # (N,d) locations
         n_dims = len(grid_points[1])
@@ -118,7 +133,9 @@ class Grid:
                 value = point[dim]
                 # if value <= min_b or value >= max_b:  # this groups outside also to shell
                 if torch.isclose(value, min_shell) or torch.isclose(value, max_shell):
+                # if value == min_shell or value == max_shell:
                     is_shell = True
+                    # print("Points on shell!")
                 elif value < min_shell or value > max_shell:
                     outer = True
                     break  # don't need to check other dimensions
@@ -138,30 +155,57 @@ class Grid:
         core_tensor = torch.stack(core) if core else torch.empty((0, n_dims))
         outer_tensor = torch.stack(outer_points) if outer_points else torch.empty((0, n_dims))
 
-        return shell_tensor, core_tensor, outer_tensor
+        return shell_tensor, core_tensor, outer_tensor  # (N,d)
 
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
+    def shell_discretize_multi_norm_dist(self, norm, shell, new_loc):
+
+        locs = self.get_locs()
+        # probability computation from original func
+        probs_per_dim = [utils.cdf(self.upper_vertices_per_dim[dim]) - utils.cdf(self.lower_vertices_per_dim[dim])
+                         for dim in range(self.dim)]
+        mesh = torch.meshgrid(*probs_per_dim, indexing='ij')
+        stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
+        probs = stacked.prod(-1)
+
+        scaled_locs_per_dim = [self.locs_per_dim[dim] / norm.variance[dim] for dim in range(self.dim)]
+        w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
+        w2 = torch.stack(w2_per_dim).pow(2).sum().sqrt()
+
+        # shelling step
+        shell, core, outer = self.shell(shell)
+
+        core_mask = (locs[:, None, :] == core[None, :, :]).all(dim=-1).any(dim=1)
+        outer_mask = ~core_mask  # as there should ONLY be core or outer
+        # print(f'core {core_mask.sum().item()}')
+        # print(f'outer {outer_mask.sum().item()}')
+        locs_core = locs[core_mask]
+        probs_core = probs[core_mask]
+
+        locs_outer = locs[outer_mask]
+        probs_outer = probs[outer_mask]
+        new_prob = probs_outer.sum().view(-1)
+        # added w2
+        M = ot.dist(locs_outer, new_loc, metric='sqeuclidean')  # new loc should be (1,d) size
+        M /= M.max()
+        w2_sinkhorn = ot.sinkhorn2(a=probs_outer, b=new_prob, M=M, reg=1)
+
+        return locs_core, probs_core, locs_outer, probs_outer, w2 , w2_sinkhorn
 
     def plot_shell_2d(self, shell):
         """shell is input shell"""
-        # Get Voronoi edges
+
         lower_vertices_per_dim, upper_vertices_per_dim = self._compute_voronoi_edges()
 
-        # Get shell/core/outer tensors using your custom snapping logic
         shell_tensor, core_tensor, outer_tensor = self.shell(shell)
 
         vor_shell = self.voronoi_edge_shell(shell)
 
-        # Start figure
         plt.figure(figsize=(8, 6))
         ax = plt.gca()
 
-        # Plot core and outer points
         ax.scatter(core_tensor[:, 0], core_tensor[:, 1], color='blue', label='Core', alpha=0.6)
         ax.scatter(outer_tensor[:, 0], outer_tensor[:, 1], color='orange', label='Outer', alpha=0.6)
 
-        # Plot all Voronoi-aligned cells as faint boxes
         for i in range(len(lower_vertices_per_dim[0])):
             for j in range(len(lower_vertices_per_dim[1])):
                 x0 = lower_vertices_per_dim[0][i].item()
@@ -179,7 +223,6 @@ class Grid:
                 )
                 ax.add_patch(rect)
 
-        # Plot the snapped Voronoi-aligned shell boundary box in red
         x_min, x_max = vor_shell[0][0].item(), vor_shell[0][1].item()
         y_min, y_max = vor_shell[1][0].item(), vor_shell[1][1].item()
         shell_box = patches.Rectangle(
@@ -194,7 +237,6 @@ class Grid:
         )
         ax.add_patch(shell_box)
 
-        # Final formatting
         ax.set_title('Shell vs Core Points with Voronoi Cells')
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
