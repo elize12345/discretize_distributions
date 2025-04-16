@@ -160,14 +160,26 @@ class Grid:
     def shell_discretize_multi_norm_dist(self, norm, shell, new_loc):
 
         locs = self.get_locs()
-        # probability computation from original func
-        probs_per_dim = [utils.cdf(self.upper_vertices_per_dim[dim]) - utils.cdf(self.lower_vertices_per_dim[dim])
-                         for dim in range(self.dim)]
+        mean = norm.mean  # [dim]
+        std = norm.stddev  # [dim]
+
+        # probability computation, to be simplified:
+        # probs_per_dim = [utils.cdf(self.upper_vertices_per_dim[dim]) - utils.cdf(self.lower_vertices_per_dim[dim])
+        #                  for dim in range(self.dim)]
+        probs_per_dim = [
+            utils.cdf((self.upper_vertices_per_dim[dim] - mean[dim]) / std[dim]) -
+            utils.cdf((self.lower_vertices_per_dim[dim] - mean[dim]) / std[dim])
+            for dim in range(self.dim)
+        ]
         mesh = torch.meshgrid(*probs_per_dim, indexing='ij')
         stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
         probs = stacked.prod(-1)
 
-        scaled_locs_per_dim = [self.locs_per_dim[dim] / norm.variance[dim] for dim in range(self.dim)]
+        # scaled_locs_per_dim = [self.locs_per_dim[dim] / norm.variance[dim] for dim in range(self.dim)]
+        scaled_locs_per_dim = [
+            (self.locs_per_dim[dim] - mean[dim]) / std[dim]
+            for dim in range(self.dim)
+        ]
         w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
         w2 = torch.stack(w2_per_dim).pow(2).sum().sqrt()
 

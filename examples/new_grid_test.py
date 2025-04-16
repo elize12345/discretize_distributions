@@ -24,7 +24,7 @@ if __name__ == "__main__":
     batch_size = torch.Size()
     torch.manual_seed(0)
 
-    user_choice = 'overlap'
+    user_choice = 'spread'
     # input(
     #     "Choose GMM mode: type 'spread' for spread apart or 'overlap' for overlapping components: ").strip().lower()
     if user_choice == 'spread':
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     grid_uniform = Grid.from_shape((10, 10), interval_per_dim)
 
     # Voronoi plot of grid
-    grid = grid_g
+    grid = grid1
     vor = Voronoi(grid.get_locs())
     fig2 = voronoi_plot_2d(vor)
     plt.title('Voronoi plot of grid used in Quantization operator')

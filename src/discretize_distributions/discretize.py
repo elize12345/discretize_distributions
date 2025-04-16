@@ -47,17 +47,29 @@ def grid_discretize_multi_norm_dist(
     assert len(norm.event_shape) == 1 and norm.event_shape[0] == grid.dim, 'dimensions grid and norm should match'
 
     locs = grid.get_locs()
+    mean = norm.mean  # [dim]
+    std = norm.stddev  # [dim]
 
     # probability computation, to be simplified:
-    probs_per_dim = [utils.cdf(grid.upper_vertices_per_dim[dim]) - utils.cdf(grid.lower_vertices_per_dim[dim])
-                     for dim in range(grid.dim)]
+    # probs_per_dim = [utils.cdf(grid.upper_vertices_per_dim[dim]) - utils.cdf(grid.lower_vertices_per_dim[dim])
+    #                  for dim in range(grid.dim)]
+    probs_per_dim = [
+        utils.cdf((grid.upper_vertices_per_dim[dim] - mean[dim]) / std[dim]) -
+        utils.cdf((grid.lower_vertices_per_dim[dim] - mean[dim]) / std[dim])
+        for dim in range(grid.dim)
+    ]
     mesh = torch.meshgrid(*probs_per_dim, indexing='ij')
     stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
     probs = stacked.prod(-1)
 
-    scaled_locs_per_dim = [grid.locs_per_dim[dim] / norm.variance[dim] for dim in range(grid.dim)]
+    # scaled_locs_per_dim = [grid.locs_per_dim[dim] / norm.variance[dim] for dim in range(grid.dim)]
+    scaled_locs_per_dim = [
+        (grid.locs_per_dim[dim] - mean[dim]) / std[dim]
+        for dim in range(grid.dim)
+    ]
     w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
     w2 = torch.stack(w2_per_dim).pow(2).sum().sqrt()
+
     return locs, probs, w2
 
 def optimal_discretize_multi_norm_dist(
