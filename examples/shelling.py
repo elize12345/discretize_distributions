@@ -19,7 +19,7 @@ if __name__ == "__main__":
     torch.manual_seed(0)
 
     # covariance_matrix = GMMWas.tensors.generate_pd_mat(batch_size + (num_mix_elems0, num_dims, num_dims))
-    locs = torch.tensor([[1.0, 1.0]])
+    locs = torch.tensor([[0.0, 0.0]])
     covariance_matrix = torch.tensor([[[0.2, 0.0000],
                                        [0.0000, 0.2]]])
     # locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     probs = probs / probs.sum(dim=-1, keepdim=True)
 
     # creates gmm with only diagonal covariances
-    gmm = dd.MixtureMultivariateNormal(
+    gauss = dd.MixtureMultivariateNormal(
         mixture_distribution=torch.distributions.Categorical(probs=probs),
         component_distribution=dd.MultivariateNormal(
             loc=locs,
@@ -40,47 +40,59 @@ if __name__ == "__main__":
     )
 
     # original method using signature operator
-    disc_gmm = dd.discretization_generator(gmm, num_locs=100)
-    locs_gmm = disc_gmm.locs
-    print(f'W2 error original Signature operation: {disc_gmm.w2}')
-    print(f'Number of signature locations: {len(locs_gmm)}')
+    disc_g_sig = dd.discretization_generator(gauss, num_locs=100)  # normal signature
+    locs_g_sig = disc_g_sig.locs.detach().numpy()
+    probs_g_sig = disc_g_sig.probs.detach().numpy()
+    print(f'W2 error original Signature operation: {disc_g_sig.w2}')
+    # print(f'Number of signature locations: {len(locs_g_sig)}')
 
-    # voronoi plot
-    # vor = Voronoi(locs_gmm.detach().numpy())
-    # fig1 = voronoi_plot_2d(vor)
-    # plt.title('Voronoi plot of Union of Signatures of GMM')
-    # # plt.savefig(f'figures/voronoi_gmm_{user_choice}.svg')
-    # plt.show()
+    grid = Grid.from_shape((10, 10), torch.tensor([[-1.0, 1], [-1.0, 1]]))  # uniform grid
 
-    locs_gmm = disc_gmm.locs.squeeze(0)  # (1,locs,dims) --> (locs,dims)
-    # grid_list = [locs_gmm[:, i] for i in range(locs_gmm.shape[1])]  # could be causing duplicates!
-    grid_list = [torch.sort(torch.unique(locs_gmm[:, i]))[0] for i in range(locs_gmm.shape[1])]
-    # grid = Grid(locs_per_dim=grid_list)
+    disc_g_grid = DiscretizedMixtureMultivariateNormalQuantization(gauss, grid)
+    locs_g_grid = disc_g_grid.locs.detach().numpy()
+    probs_g_grid = disc_g_grid.probs.detach().numpy()
+    print(f'W2 error grid operation: {disc_g_grid.w2.item()}')
 
-    grid = Grid.from_shape((10, 10), torch.tensor([[-1, 2], [-1, 2]]))
-    shell_input = [(torch.tensor(0.5), torch.tensor(1.5)), (torch.tensor(0.5), torch.tensor(1.5))]
+    # scaling to compare prob mass across grid and signature
+    global_min = min(probs_g_grid.min(), probs_g_sig.min())
+    global_max = max(probs_g_grid.max(), probs_g_sig.max())
+    s_grid = (probs_g_grid - global_min) / (global_max - global_min) * 100
+    s_sig = (probs_g_sig - global_min) / (global_max - global_min) * 100
+
+    plt.figure()
+    plt.scatter(locs_g_grid[:, 0], locs_g_grid[:, 1], s=s_grid, label="Grid", color='red', alpha=0.6)
+    plt.scatter(locs_g_sig[:, 0], locs_g_sig[:, 1], s=s_sig, label="Signature", color='blue', alpha=0.6)
+    plt.legend()
+    # plt.title("Mean at (0,0) and grid from (-1,1)")
+    plt.show()
+    print(f"total prob grid {probs_g_grid.sum()}")
+    print(f"total prob signature {probs_g_sig.sum()}")
+
+    # seems like a lot of mass is in left corner always, why?
+    shell_input = [(torch.tensor(-0.5), torch.tensor(0.5)), (torch.tensor(-0.5), torch.tensor(0.5))]
+
+    # creates shell
     shell, core, outer = grid.shell(shell=shell_input)
+
+    # "snaps" shell boundary to voronoi edges
     vor_shell = grid.voronoi_edge_shell(shell=shell_input)
 
-    # grid.plot_shell_2d(shell_input)
+    grid.plot_shell_2d(shell_input)
 
     # all mass is at bottom for some reason --> lower w2 !!
-    new_loc = torch.tensor([[-0.8, -0.8]])
+    # new_loc = torch.tensor([[-1.0, -1.0], [-1, 1], [1, 1], [1, -1]])
+    new_loc = torch.tensor([[-1.0, -1.0]])
 
     print(f'No. of shell points: {len(shell)}, core: {len(core)}, outer: {len(outer)}')
 
-    locs_core, probs_core, locs_outer, probs_outer, w2, w2_sinkhorn = grid.shell_discretize_multi_norm_dist(gmm, shell_input, new_loc)
+    locs_core, probs_core, locs_outer, probs_outer, w2, w2_added = grid.shell_discretize_multi_norm_dist(gauss, shell_input, new_loc)
 
     # analysis
     print(f'No. of core points: {len(probs_core)}, outer: {len(probs_outer)}')
     print(f'Prob mass inside core {probs_core.sum()}, prob mass outside core {probs_outer.sum()}, total {probs_core.sum()+probs_outer.sum()}')
-    print(f'Added W2 error {w2_sinkhorn}')
-    # print(f'Probs total {probs.sum()}')
-    # combined = torch.cat([probs_core, probs_outer])
-    # sorted_combined, _ = torch.sort(combined)
-    # sorted_original, _ = torch.sort(probs)
-    # assert torch.allclose(sorted_combined, sorted_original, atol=1e-6), "Mismatch in probability values!"
+    print(f'W2 error: {w2}, and added W2 error for new location {w2_added}')
 
+    # plot of new loc
     global_min = min(probs_core.min(), probs_outer.min())
     global_max = max(probs_core.max(), probs_outer.max())
     s_core = (probs_core - global_min) / (global_max - global_min) * 100

@@ -183,13 +183,17 @@ class Grid:
 
         locs_outer = locs[outer_mask]
         probs_outer = probs[outer_mask]
-        new_prob = probs_outer.sum().view(-1)
-        # added w2
+        total_prob = probs_outer.sum()
+
+        N = new_loc.shape[0]
+        new_prob = torch.full((N,), total_prob / N)
+
+        # added w2 to move to new location
         M = ot.dist(locs_outer, new_loc, metric='sqeuclidean')  # new loc should be (1,d) size
         M /= M.max()
-        w2_sinkhorn = ot.sinkhorn2(a=probs_outer, b=new_prob, M=M, reg=1)
+        w2_added = ot.sinkhorn2(a=probs_outer, b=new_prob.view(-1), M=M, reg=1)
 
-        return locs_core, probs_core, locs_outer, probs_outer, w2 , w2_sinkhorn
+        return locs_core, probs_core, locs_outer, probs_outer, w2, w2_added
 
     def plot_shell_2d(self, shell):
         """shell is input shell"""
