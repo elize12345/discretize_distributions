@@ -19,13 +19,14 @@ class Grid:
         locs_per_dim: list of 1D torch tensors, each of shape (n_i,)
         Example: [torch.linspace(0, 1, 5), torch.tensor([0., 2., 4.])]
         """
-        # self.locs_per_dim = locs_per_dim
         # to ensure sorting so no negative probabilities when taking cdf of upper and lower vertices,
         # so ensures lower vertice < upper vertice in Voronoi partition calculation
-        self.locs_per_dim = [locs.sort().values for locs in locs_per_dim]
+        # self.locs_per_dim = [locs.sort().values for locs in locs_per_dim]  # use check instead
+        assert all((locs[1:] >= locs[:-1]).all() for locs in
+                   locs_per_dim), "Each tensor in locs_per_dim must be sorted in ascending order"
+        self.locs_per_dim = locs_per_dim
         self.dim = len(locs_per_dim)
         self.shape = tuple(len(p) for p in locs_per_dim)
-
         self.lower_vertices_per_dim, self.upper_vertices_per_dim = self._compute_voronoi_edges()
 
     @staticmethod
@@ -164,8 +165,6 @@ class Grid:
         std = norm.stddev  # [dim]
 
         # probability computation, to be simplified:
-        # probs_per_dim = [utils.cdf(self.upper_vertices_per_dim[dim]) - utils.cdf(self.lower_vertices_per_dim[dim])
-        #                  for dim in range(self.dim)]
         probs_per_dim = [
             utils.cdf((self.upper_vertices_per_dim[dim] - mean[dim]) / std[dim]) -
             utils.cdf((self.lower_vertices_per_dim[dim] - mean[dim]) / std[dim])
@@ -175,7 +174,6 @@ class Grid:
         stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
         probs = stacked.prod(-1)
 
-        # scaled_locs_per_dim = [self.locs_per_dim[dim] / norm.variance[dim] for dim in range(self.dim)]
         scaled_locs_per_dim = [
             (self.locs_per_dim[dim] - mean[dim]) / std[dim]
             for dim in range(self.dim)
@@ -200,7 +198,7 @@ class Grid:
         N = new_loc.shape[0]
         new_prob = torch.full((N,), total_prob / N)
 
-        # added w2 to move to new location
+        # added w2 to move to new location - should be closed form using rectangular shapes!
         M = ot.dist(locs_outer, new_loc, metric='sqeuclidean')  # new loc should be (1,d) size
         M /= M.max()
         w2_added = ot.sinkhorn2(a=probs_outer, b=new_prob.view(-1), M=M, reg=1)
