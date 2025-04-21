@@ -45,7 +45,7 @@ class Grid:
         stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
         return stacked
 
-    @classmethod
+    @classmethod  # class method - to call function on the class itself
     def from_points(cls, points: torch.Tensor, bounds: [] = None):
         """
         New grid defined by points and bounds
@@ -63,16 +63,12 @@ class Grid:
         lower_vertices_per_dim = []
         upper_vertices_per_dim = []
 
-
-        for dim_locs in self.locs_per_dim:
+        for dim, dim_locs in enumerate(self.locs_per_dim):
             midlocs = (dim_locs[1:] + dim_locs[:-1]) / 2
             if bounds:
-                for dim in range(self.dim):
-                    bound_lower, bound_upper = bounds[dim]
-                    # lower = torch.tensor(bound_lower, device=dim_locs.device, dtype=dim_locs.dtype)
-                    lower = bound_lower.clone().detach()
-                    # upper = torch.tensor(bound_upper, device=dim_locs.device, dtype=dim_locs.dtype)
-                    upper = bound_upper.clone().detach()
+                bound_lower, bound_upper = bounds[dim]
+                lower = torch.tensor(bound_lower, device=dim_locs.device, dtype=dim_locs.dtype)
+                upper = torch.tensor(bound_upper, device=dim_locs.device, dtype=dim_locs.dtype)
             else:
                 lower = torch.tensor(-float("inf"), device=dim_locs.device, dtype=dim_locs.dtype)
                 upper = torch.tensor(float("inf"), device=dim_locs.device, dtype=dim_locs.dtype)
@@ -104,8 +100,6 @@ class Grid:
         core = []
         outer_points = []
         visited = set()
-        # vor_shell = self.voronoi_edge_shell(shell)  # -> dont need it to stick to exitisting voronoi
-        # edge as we re-calculate it
 
         for point in grid_points:
             pt_tuple = tuple(point.tolist())
@@ -120,18 +114,12 @@ class Grid:
             for dim in range(n_dims):
                 min_shell, max_shell = shell[dim]
                 value = point[dim]
-                # if value <= min_b or value >= max_b:  # this groups outside also to shell
                 if torch.isclose(value, min_shell) or torch.isclose(value, max_shell):
-                # if value == min_shell or value == max_shell:
                     is_shell = True
                     print("Points on shell! Reset boundary")  # asserstion if points lie on shell?
                 elif value < min_shell or value > max_shell:
                     outer = True
                     break  # don't need to check other dimensions
-                    # shell_points.append(point)
-                    # visited_shell.add(pt_tuple)
-                    # is_shell = True
-                    # break  # so only check one dimension if its in shell, no need to iterate through other dims
             if outer:
                 outer_points.append(point)
             elif is_shell:
@@ -144,10 +132,41 @@ class Grid:
         core_tensor = torch.stack(core) if core else torch.empty((0, n_dims))
         outer_tensor = torch.stack(outer_points) if outer_points else torch.empty((0, n_dims))
 
-        # then we re-cal voronoi edges, probs and w2
+        # then we create a new grid from just the core points
         core_grid = Grid.from_points(core_tensor, bounds=shell) if core_tensor.numel() > 0 else None
 
-        return shell_tensor, core_tensor, outer_tensor, core_grid
+        # outer part becomes multiple grids
+        outer_grids = []
+        # outer_grids = [
+        # Grid for x < x_min,
+        # Grid for x > x_max,
+        # Grid for y < y_min,
+        # Grid for y > y_max,
+        # ...
+        # 2 × d total
+        # ]
+        for dim in range(n_dims):
+            min_d, max_d = shell[dim]
+
+            mask_before = grid_points[:, dim] < min_d  # before the core
+            for i in range(n_dims):
+                if i == dim:
+                    continue
+                min_i, max_i = shell[i]  # get points from all other dimensions
+                mask_before &= (grid_points[:, i] > min_i) & (grid_points[:, i] < max_i)
+
+            outer_grids.append(Grid.from_points(grid_points[mask_before]))
+
+            mask_after = grid_points[:, dim] > max_d  # after core
+            for i in range(n_dims):
+                if i == dim:
+                    continue
+                min_i, max_i = shell[i]
+                mask_after &= (grid_points[:, i] > min_i) & (grid_points[:, i] < max_i)
+
+            outer_grids.append(Grid.from_points(grid_points[mask_after]))
+
+        return shell_tensor, core_tensor, outer_tensor, core_grid, outer_grids
 
     def voronoi_edge_shell(self, shell):
         """Finds the closest Voronoi edge to the input shell"""
@@ -191,67 +210,11 @@ class Grid:
 
         return vor_shell
 
-    # def shell_discretize_multi_norm_dist(self, norm, shell):
-    #
-    #     shell_tensor, core_tensor, outer_tensor, core_grid = self.shell(shell)
-    #     locs_core = core_grid.get_locs()
-    #     locs = self.get_locs()
-    #
-    #     mean = norm.mean
-    #     std = norm.stddev
-    #
-    #     # only works for Gaussian's atm
-    #     probs_per_dim = [
-    #         utils.cdf((core_grid.upper_vertices_per_dim[dim] - mean[dim]) / std[dim]) -
-    #         utils.cdf((core_grid.lower_vertices_per_dim[dim] - mean[dim]) / std[dim])
-    #         for dim in range(core_grid.dim)
-    #     ]
-    #
-    #     mesh = torch.meshgrid(*probs_per_dim, indexing='ij')
-    #     stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
-    #     probs_core = stacked.prod(-1)
-    #
-    #     scaled_locs_per_dim = [
-    #         (core_grid.locs_per_dim[dim] - mean[dim]) / std[dim]
-    #         for dim in range(core_grid.dim)
-    #     ]
-    #     w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
-    #     w2_core = torch.stack(w2_per_dim).pow(2).sum().sqrt() # not correct as its considers the distribuion,
-    #     # use one gaussian atm but for a mixture it wont work
-    #
-    #     # verify shelling step
-    #     probs_per_dim = [
-    #         utils.cdf((self.upper_vertices_per_dim[dim] - mean[dim]) / std[dim]) -
-    #         utils.cdf((self.lower_vertices_per_dim[dim] - mean[dim]) / std[dim])
-    #         for dim in range(core_grid.dim)
-    #     ]
-    #
-    #     mesh = torch.meshgrid(*probs_per_dim, indexing='ij')
-    #     stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
-    #     probs_total = stacked.prod(-1)
-    #
-    #     core_mask = (locs[:, None, :] == core_tensor[None, :, :]).all(dim=-1).any(dim=1)
-    #     locs_core_test = locs[core_mask]
-    #     outer_mask = ~core_mask
-    #     print(f'Locations core {torch.allclose(locs_core_test, locs_core, atol=1e-6)}')
-    #
-    #     # re-scale probs
-    #     core_mass = probs_total[core_mask].sum()
-    #     probs_core_scaled = probs_core * core_mass
-    #     print(f'Sum of prob in core {probs_core_scaled.sum()}')
-    #
-    #     # scaling
-    #     s = (probs_total - probs_total.min()) / (probs_total.max() - probs_total.min()) * 100
-    #     s_core = s[core_mask]
-    #     s_outer = s[outer_mask]
-    #
-    #     return locs_core, probs_core_scaled, w2_core, s_core, s_outer
-
     def plot_shell_2d(self, shell):
         """shell is input shell"""
 
         lower_vertices_per_dim, upper_vertices_per_dim = self._compute_voronoi_edges()
-        shell_tensor, core_tensor, outer_tensor, core_grid = self.shell(shell)
+        shell_tensor, core_tensor, outer_tensor, core_grid, outer_grids = self.shell(shell)
         core_lower_vertices_per_dim, core_upper_vertices_per_dim = core_grid._compute_voronoi_edges(bounds=shell)
 
         plt.figure(figsize=(8, 6))
@@ -293,6 +256,25 @@ class Grid:
                     linestyle='-'
                 )
                 ax.add_patch(rect)
+
+        for outer_grid in outer_grids:
+            outer_lvd, outer_uvd = outer_grid._compute_voronoi_edges()
+            for i in range(len(outer_lvd[0])):
+                for j in range(len(outer_lvd[1])):
+                    x0 = outer_lvd[0][i].item()
+                    x1 = outer_uvd[0][i].item()
+                    y0 = outer_lvd[1][j].item()
+                    y1 = outer_uvd[1][j].item()
+                    rect = patches.Rectangle(
+                        (x0, y0),
+                        x1 - x0,
+                        y1 - y0,
+                        edgecolor='green',
+                        facecolor='none',
+                        linewidth=1.0,
+                        linestyle='--'
+                    )
+                    ax.add_patch(rect)
 
         ax.set_title('Core vs Outer Points with old and new Voronoi Cells')
         ax.set_xlabel('X')

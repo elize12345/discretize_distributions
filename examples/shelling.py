@@ -14,7 +14,7 @@ import numpy as np
 if __name__ == "__main__":
 
     num_dims = 2
-    num_mix_elems0 = 2
+    num_mix_elems0 = 1
     batch_size = torch.Size()
     torch.manual_seed(0)
 
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     probs = probs / probs.sum(dim=-1, keepdim=True)
 
     # creates gmm with only diagonal covariances
-    gauss = dd.MixtureMultivariateNormal(
+    norm = dd.MixtureMultivariateNormal(
         mixture_distribution=torch.distributions.Categorical(probs=probs),
         component_distribution=dd.MultivariateNormal(
             loc=locs,
@@ -40,7 +40,7 @@ if __name__ == "__main__":
     )
 
     # original method using signature operator
-    disc_g_sig = dd.discretization_generator(gauss, num_locs=100)  # normal signature
+    disc_g_sig = dd.discretization_generator(norm, num_locs=100)  # normal signature
     locs_g_sig = disc_g_sig.locs.detach().numpy()
     probs_g_sig = disc_g_sig.probs.detach().numpy()
     print(f'W2 error original Signature operation: {disc_g_sig.w2}')
@@ -49,9 +49,9 @@ if __name__ == "__main__":
     locs_g = disc_g_sig.locs
     x_min, x_max = locs_g[:, 0].min(), locs_g[:, 0].max()
     y_min, y_max = locs_g[:, 1].min(), locs_g[:, 1].max()
-    grid = Grid.from_shape((20, 10), ((x_min, x_max), (y_min, y_max)))
+    grid = Grid.from_shape((10, 10), ((x_min, x_max), (y_min, y_max)))
 
-    disc_g_grid = DiscretizedMixtureMultivariateNormalQuantization(gauss, grid)
+    disc_g_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, grid)
     locs_g_grid = disc_g_grid.locs.detach().numpy()
     probs_g_grid = disc_g_grid.probs.detach().numpy()
     print(f'W2 error grid operation: {disc_g_grid.w2.item()}')
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     plt.title("Comparison of grid locations and signature locations")
     plt.show()
 
-    # shelling - shell input must be floats
+    # shelling - boundary input must be floats
     shell_input = [(torch.tensor(1.0), torch.tensor(2.0)), (torch.tensor(-1.0), torch.tensor(1.0))]
     grid.plot_shell_2d(shell_input)
 
@@ -77,9 +77,9 @@ if __name__ == "__main__":
     probs_total = disc_g_grid.probs
     locs_total = disc_g_grid.locs
 
-    shell_tensor, core_tensor, outer_tensor, core_grid = grid.shell(shell=shell_input)
-    # grid not bounded yet ...
-    disc_core_grid = DiscretizedMixtureMultivariateNormalQuantization(gauss, core_grid)  # redefine a grid
+    _, core_tensor, outer_tensor, core_grid, outer_grids = grid.shell(shell=shell_input)
+    # but this will evaluate all points in gauss into core_grid which we don't want?
+    disc_core_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, core_grid)  # redefine a grid
 
     # re-scale probs
     core_mask = (locs_total[:, None, :] == core_tensor[None, :, :]).all(dim=-1).any(dim=1)
@@ -87,9 +87,41 @@ if __name__ == "__main__":
     core_mass = probs_total[core_mask].sum()
     probs_core_scaled = probs_core * core_mass
 
-    # w2 ??
     w2_core = disc_core_grid.w2
-    w2_core_scaled = w2_core * core_mass  # feels illegal
 
     print(f'Sum of prob in core {probs_core_scaled.sum()}')
-    print(f'W2 error {w2_core_scaled.item()}')
+    print(f'W2 error {w2_core.item()}')
+
+    # locs_outer = []
+    # for i in range(len(outer_grids)):
+    #     outer_grid = outer_grids[i]
+    #     locs = outer_grid.get_locs()
+    #     locs_outer.append(locs)
+    locs_outer = [g.get_locs() for g in outer_grids if len(g) > 0]
+    locs_outer_tensor = torch.cat(locs_outer, dim=0) if locs_outer else torch.empty((0, num_dims))
+    print(f'outer grids locs {len(locs_outer_tensor)}')
+    print(f"outer tensor locs {len(outer_tensor)}")
+    print(torch.allclose(locs_outer_tensor, outer_tensor, atol=1e-6))
+
+    # test - if bound spans whole space then the w2 error should be equal!
+    # shell_inf = [(torch.tensor(-float("inf")), torch.tensor(float("inf"))), (torch.tensor(-float("inf")), torch.tensor(float("inf")))]
+    # grid.plot_shell_2d(shell_inf)
+    #
+    # # re-calc probs and w2
+    # probs_total = disc_g_grid.probs
+    # locs_total = disc_g_grid.locs
+    #
+    # _, core_tensor, outer_tensor, core_grid, outer_grids = grid.shell(shell=shell_inf)
+    # # but this will evaluate all points in gauss into core_grid which we don't want?
+    # disc_core_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, core_grid)  # redefine a grid
+    #
+    # # re-scale probs
+    # core_mask = (locs_total[:, None, :] == core_tensor[None, :, :]).all(dim=-1).any(dim=1)
+    # probs_core = disc_core_grid.probs
+    # core_mass = probs_total[core_mask].sum()
+    # probs_core_scaled = probs_core * core_mass
+    #
+    # w2_core = disc_core_grid.w2
+    #
+    # print(f'Sum of prob in core {probs_core_scaled.sum()}')
+    # print(f'W2 error {w2_core.item()}')
