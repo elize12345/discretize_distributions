@@ -24,7 +24,7 @@ if __name__ == "__main__":
     batch_size = torch.Size()
     torch.manual_seed(0)
 
-    user_choice = 'overlap'
+    user_choice = 'spread'
     # input(
     #     "Choose GMM mode: type 'spread' for spread apart or 'overlap' for overlapping components: ").strip().lower()
     if user_choice == 'spread':

@@ -73,9 +73,9 @@ class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
                 covariance_matrix=cov_p[p]
             )
             _, probs_p, w2_p = discretize_multi_norm_dist(component_p, None, grid)
-
             pi = probs_mix[p]
-            probs += probs_p * pi  # has no point, the probs stay the same for the same grid
+            probs += probs_p * pi  # do need it as grid probs are dependent on component mean and std
+            # for standardization
             w2 += w2_p.pow(2) * pi
 
         # batched version ?
