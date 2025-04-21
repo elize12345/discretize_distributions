@@ -14,18 +14,18 @@ import numpy as np
 if __name__ == "__main__":
 
     num_dims = 2
-    num_mix_elems0 = 1
+    num_mix_elems0 = 2
     batch_size = torch.Size()
     torch.manual_seed(0)
 
     # covariance_matrix = GMMWas.tensors.generate_pd_mat(batch_size + (num_mix_elems0, num_dims, num_dims))
-    locs = torch.tensor([[1.0, 1.0]])
-    covariance_matrix = torch.tensor([[[0.2, 0.0000],
-                                       [0.0000, 0.2]]])
-    # locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
-    # # only diagonal and pos def covariance matrices
-    # covariance_diag = torch.exp(torch.randn(batch_size + (num_mix_elems0, num_dims,)))
-    # covariance_matrix = torch.diag_embed(covariance_diag)
+    # locs = torch.tensor([[1.0, 1.0]])
+    # covariance_matrix = torch.tensor([[[0.2, 0.0000],
+    #                                    [0.0000, 0.2]]])
+    locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
+    # only diagonal and pos def covariance matrices
+    covariance_diag = torch.exp(torch.randn(batch_size + (num_mix_elems0, num_dims,)))
+    covariance_matrix = torch.diag_embed(covariance_diag)
 
     probs = torch.rand(batch_size + (num_mix_elems0,))
     probs = probs / probs.sum(dim=-1, keepdim=True)
@@ -70,9 +70,26 @@ if __name__ == "__main__":
     plt.show()
 
     # shelling - shell input must be floats
-    shell_input = [(torch.tensor(0.75), torch.tensor(1.25)), (torch.tensor(0.75), torch.tensor(1.25))]
+    shell_input = [(torch.tensor(1.0), torch.tensor(2.0)), (torch.tensor(-1.0), torch.tensor(1.0))]
+    grid.plot_shell_2d(shell_input)
 
-    grid.plot_shell_2d(gauss, shell_input)
-    core_locs, probs_core, w2_core = grid.shell_discretize_multi_norm_dist(gauss, shell_input)
+    # re-calc probs and w2
+    probs_total = disc_g_grid.probs
+    locs_total = disc_g_grid.locs
 
-    print(f'W2 error grid operation: {w2_core}')
+    shell_tensor, core_tensor, outer_tensor, core_grid = grid.shell(shell=shell_input)
+    # grid not bounded yet ...
+    disc_core_grid = DiscretizedMixtureMultivariateNormalQuantization(gauss, core_grid)  # redefine a grid
+
+    # re-scale probs
+    core_mask = (locs_total[:, None, :] == core_tensor[None, :, :]).all(dim=-1).any(dim=1)
+    probs_core = disc_core_grid.probs
+    core_mass = probs_total[core_mask].sum()
+    probs_core_scaled = probs_core * core_mass
+
+    # w2 ??
+    w2_core = disc_core_grid.w2
+    w2_core_scaled = w2_core * core_mass  # feels illegal
+
+    print(f'Sum of prob in core {probs_core_scaled.sum()}')
+    print(f'W2 error {w2_core_scaled.item()}')
