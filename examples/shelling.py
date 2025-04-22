@@ -14,7 +14,7 @@ import numpy as np
 if __name__ == "__main__":
 
     num_dims = 2
-    num_mix_elems0 = 1
+    num_mix_elems0 = 2
     batch_size = torch.Size()
     torch.manual_seed(0)
 
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     plt.show()
 
     # shelling - boundary input must be floats
-    shell_input = [(torch.tensor(1.0), torch.tensor(2.0)), (torch.tensor(-1.0), torch.tensor(1.0))]
+    shell_input = [(torch.tensor(-2.0), torch.tensor(2.0)), (torch.tensor(-1.0), torch.tensor(1.0))]
     grid.plot_shell_2d(shell_input)
 
     # re-calc probs and w2
@@ -99,9 +99,21 @@ if __name__ == "__main__":
     #     locs_outer.append(locs)
     locs_outer = [g.get_locs() for g in outer_grids if len(g) > 0]
     locs_outer_tensor = torch.cat(locs_outer, dim=0) if locs_outer else torch.empty((0, num_dims))
-    print(f'outer grids locs {len(locs_outer_tensor)}')
-    print(f"outer tensor locs {len(outer_tensor)}")
-    print(torch.allclose(locs_outer_tensor, outer_tensor, atol=1e-6))
+    print(f'Outer grids locs from outer-grids {len(locs_outer_tensor)}')
+    print(f"Actual outer tensor locs {len(outer_tensor)}")
+    print(f'No outer-grids {len(outer_grids)}')
+
+    set_from_grids = set(map(tuple, locs_outer_tensor.tolist()))
+    set_actual = set(map(tuple, outer_tensor.tolist()))
+
+    print("Are they equal?", set_from_grids == set_actual)
+
+    for i in range(len(outer_grids)):
+        outer_lvd, outer_uvd = outer_grids[i]._compute_voronoi_edges()
+        print(f'lower_vertices_per_dim {outer_lvd}')
+        print(f'upper_vertices_per_dim {outer_uvd}')
+
+    # Regions are unbounded!
 
     # test - if bound spans whole space then the w2 error should be equal!
     # shell_inf = [(torch.tensor(-float("inf")), torch.tensor(float("inf"))), (torch.tensor(-float("inf")), torch.tensor(float("inf")))]
