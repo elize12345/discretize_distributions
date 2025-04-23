@@ -1,6 +1,6 @@
 import torch
 from typing import Union
-from matplotlib import pyplot as plt, patches
+from matplotlib import pyplot as plt, patches, cm
 import discretize_distributions.utils as utils
 from discretize_distributions.distributions.multivariate_normal import MultivariateNormal
 import discretize_distributions.tensors as tensors
@@ -50,7 +50,8 @@ class Grid:
     # it uses voronoi edges with bounds
     def from_points(cls, points: torch.Tensor, bounds: [] = None):
         """
-        New grid defined by points and possibly set bounds
+        New grid defined by points and possibly set bounds, list of bounds per dimension:
+        [bound_lower, bound_upper] = bounds[dim]
         """
         dim = points.shape[1]
         locs_per_dim = []
@@ -137,8 +138,24 @@ class Grid:
         # then we create a new grid from just the core points
         core_grid = Grid.from_points(core_tensor, bounds=shell) if core_tensor.numel() > 0 else None
 
+        outer_grids, bounds = self.split_outer_grids(outer_tensor, shell)
+
+        return shell_tensor, core_tensor, outer_tensor, core_grid, outer_grids, bounds
+
+    def split_outer_grids(self, outer_tensor, shell):
+        """
+        Args:
+            outer_tensor:
+            shell:
+
+        Returns:
+
+        """
+        grid_points = self.get_locs()  # (N,d) locations
+        n_dims = len(grid_points[1])
         # same for outer but ensuring it stays rectangular
         outer_grids = []
+        bounds = []
         if outer_tensor.numel() > 0:
             # -1 is less than, 0 is inside, and 1 is greater than core
             all_patterns = list(itertools.product([-1, 0, 1], repeat=n_dims))  # generates all possible combinations
@@ -149,23 +166,151 @@ class Grid:
             all_patterns.remove((0,) * n_dims)  # this excludes all patterns that is just 0,0,... as it is the core
 
             for pattern in all_patterns:
+                bound_per_grid = []  # reset for each grid, for each outer_grid the bound is a list of min, max
+                # values per dimension
                 mask = torch.ones(len(outer_tensor), dtype=torch.bool)  # mask includes all points first
                 for d, direction in enumerate(pattern):
                     min_d, max_d = shell[d]
                     if direction == -1:  # if direction is -1 then it is defined as less than min_core in that dimension
                         mask &= outer_tensor[:, d] < min_d
+                        bound_per_grid.append([-float('inf'), torch.clone(min_d)])
                     elif direction == 0:  # same, if direction is 0 then it is defined as inside core in that dim,
                         # we have to do this to ensure the grids are rectangular & disjoint -> aligned with the core!
                         mask &= (outer_tensor[:, d] >= min_d) & (outer_tensor[:, d] <= max_d)
+                        bound_per_grid.append([torch.clone(min_d), torch.clone(max_d)])
                     elif direction == 1:  # same, if direction is 1 then it is defined as greater than max_core in that
                         # dimension
                         mask &= outer_tensor[:, d] > max_d
+                        bound_per_grid.append([torch.clone(max_d), float('inf')])
 
                 if mask.any():  # if mask has any points that match pattern than make a grid and store it! Should be
                     # 3^D -1 grids (exclude the core)
-                    outer_grids.append(Grid.from_points(outer_tensor[mask]))
+                    print(f"\n Pattern: {pattern}")
+                    print(f'Points in region {len(outer_tensor[mask])}')
+                    print("Bound per dimension:")
+                    for i, b in enumerate(bound_per_grid):
+                        print(f"  Dim {i}: {b}")
 
-        return shell_tensor, core_tensor, outer_tensor, core_grid, outer_grids
+                    grid = Grid.from_points(outer_tensor[mask], bounds=bound_per_grid)
+                    outer_grids.append(grid)
+                    bounds.append(bound_per_grid)
+
+                    outer_lvd, outer_uvd = grid._compute_voronoi_edges(bounds=bound_per_grid)
+
+                    print("Voronoi Edges (lower, upper):")
+                    for dim in range(len(outer_lvd)):
+                        print(f"  Dim {dim}:")
+                        print(f"    Lower: {outer_lvd[dim]}")
+                        print(f"    Upper: {outer_uvd[dim]}")
+
+        return outer_grids, bounds
+
+    def plot_shell_2d(self, shell):
+        """shell is input shell"""
+        lower_vertices_per_dim, upper_vertices_per_dim = self._compute_voronoi_edges()
+        shell_tensor, core_tensor, outer_tensor, core_grid, outer_grids, bounds = self.shell(shell)
+        core_lower_vertices_per_dim, core_upper_vertices_per_dim = core_grid._compute_voronoi_edges(bounds=shell)
+
+        plt.figure(figsize=(8, 6))
+        ax = plt.gca()
+
+        ax.scatter(core_tensor[:, 0], core_tensor[:, 1], color='blue', label='Core', alpha=0.6)
+        # ax.scatter(outer_tensor[:, 0], outer_tensor[:, 1], color='orange', label='Outer', alpha=0.6)
+
+        cmap = cm.get_cmap('tab10')  # or 'Set1', 'tab20', etc.
+
+        for idx, grid in enumerate(outer_grids):
+            outer_locs = grid.get_locs()
+            color = cmap(idx % 10)  # tab10 has 10 unique colors
+            ax.scatter(outer_locs[:, 0], outer_locs[:, 1], color=color, alpha=0.6)
+
+        # for i in range(len(lower_vertices_per_dim[0])):
+        #     for j in range(len(lower_vertices_per_dim[1])):
+        #         x0 = lower_vertices_per_dim[0][i].item()
+        #         x1 = upper_vertices_per_dim[0][i].item()
+        #         y0 = lower_vertices_per_dim[1][j].item()
+        #         y1 = upper_vertices_per_dim[1][j].item()
+        #         rect = patches.Rectangle(
+        #             (x0, y0),
+        #             x1 - x0,
+        #             y1 - y0,
+        #             edgecolor='gray',
+        #             facecolor='none',
+        #             linewidth=0.5,
+        #             # linestyle=':'
+        #         )
+        #         ax.add_patch(rect)
+
+        for i in range(len(core_lower_vertices_per_dim[0])):
+            for j in range(len(core_lower_vertices_per_dim[1])):
+                x0 = core_lower_vertices_per_dim[0][i].item()
+                x1 = core_upper_vertices_per_dim[0][i].item()
+                y0 = core_lower_vertices_per_dim[1][j].item()
+                y1 = core_upper_vertices_per_dim[1][j].item()
+                rect = patches.Rectangle(
+                    (x0, y0),
+                    x1 - x0,
+                    y1 - y0,
+                    edgecolor='blue',
+                    facecolor='none',
+                    linewidth=1.2,
+                    linestyle='-'
+                )
+                ax.add_patch(rect)
+        #
+        # for grid, bound in zip(outer_grids, bounds):
+        #     lvd, uvd = grid._compute_voronoi_edges(bounds=bound)
+        #
+        #     lvd = self.clamp_voronoi_edges(lvd, 2)
+        #     uvd = self.clamp_voronoi_edges(uvd, 2)
+        #
+        #     for i in range(len(lvd[0]) - 1):
+        #         for j in range(len(lvd[1]) - 1):
+        #             x0, x1 = lvd[0][i].item(), uvd[0][i].item()
+        #             y0, y1 = lvd[1][j].item(), uvd[1][j].item()
+        #             rect = patches.Rectangle((x0, y0), x1 - x0, y1 - y0, edgecolor='green', linestyle='--',
+        #                                      facecolor='none')
+        #             ax.add_patch(rect)
+
+        # rects = []
+        # for i, bound in enumerate(bounds):
+        #     x_min, x_max = bound[0]
+        #     y_min, y_max = bound[1]
+        #     rect = patches.Rectangle(
+        #         (x_min, y_min),
+        #         x_max - x_min,
+        #         y_max - y_min,
+        #         edgecolor='green',
+        #         facecolor='none',
+        #         linewidth=1.5,
+        #         linestyle='--',
+        #         label='Outer bounds' if i == 0 else None
+        #     )
+        #     rects.append(rect)
+        #
+        # for rect in rects:
+        #     ax.add_patch(rect)
+
+        ax.set_title('Core vs Outer Points with old and new Voronoi Cells')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.legend()
+        ax.grid(True)
+        plt.show()
+
+    def clamp_voronoi_edges(self, vertices_per_dim, clamp_val=5.0):
+        """
+        replaces -inf/inf with clamped values to use for plotting
+        """
+        clamped = []
+        for v in vertices_per_dim:
+            clamped_dim = torch.where(
+                torch.isinf(v),
+                torch.sign(v) * clamp_val,  # replaces the inf value
+                v
+            )
+            clamped.append(clamped_dim)
+        return clamped
 
     def voronoi_edge_shell(self, shell):
         """Finds the closest Voronoi edge to the input shell"""
@@ -208,86 +353,6 @@ class Grid:
             #     print(f"Dimension {dim}: shell ({min_shell.item()}, {max_shell.item()}) not aligned with Voronoi edges.")
 
         return vor_shell
-
-    def plot_shell_2d(self, shell):
-        """shell is input shell"""
-
-        # lower_vertices_per_dim, upper_vertices_per_dim = self._compute_voronoi_edges()
-        shell_tensor, core_tensor, outer_tensor, core_grid, outer_grids = self.shell(shell)
-        core_lower_vertices_per_dim, core_upper_vertices_per_dim = core_grid._compute_voronoi_edges(bounds=shell)
-
-        plt.figure(figsize=(8, 6))
-        ax = plt.gca()
-
-        ax.scatter(core_tensor[:, 0], core_tensor[:, 1], color='blue', label='Core', alpha=0.6)
-        ax.scatter(outer_tensor[:, 0], outer_tensor[:, 1], color='orange', label='Outer', alpha=0.6)
-
-        # for i in range(len(lower_vertices_per_dim[0])):
-        #     for j in range(len(lower_vertices_per_dim[1])):
-        #         x0 = lower_vertices_per_dim[0][i].item()
-        #         x1 = upper_vertices_per_dim[0][i].item()
-        #         y0 = lower_vertices_per_dim[1][j].item()
-        #         y1 = upper_vertices_per_dim[1][j].item()
-        #         rect = patches.Rectangle(
-        #             (x0, y0),
-        #             x1 - x0,
-        #             y1 - y0,
-        #             edgecolor='gray',
-        #             facecolor='none',
-        #             linewidth=0.5,
-        #             # linestyle=':'
-        #         )
-        #         ax.add_patch(rect)
-
-        for i in range(len(core_lower_vertices_per_dim[0])):
-            for j in range(len(core_lower_vertices_per_dim[1])):
-                x0 = core_lower_vertices_per_dim[0][i].item()
-                x1 = core_upper_vertices_per_dim[0][i].item()
-                y0 = core_lower_vertices_per_dim[1][j].item()
-                y1 = core_upper_vertices_per_dim[1][j].item()
-                rect = patches.Rectangle(
-                    (x0, y0),
-                    x1 - x0,
-                    y1 - y0,
-                    edgecolor='blue',
-                    facecolor='none',
-                    linewidth=1.2,
-                    linestyle='-'
-                )
-                ax.add_patch(rect)
-
-        rects = []
-        for i in range(len(outer_grids)):
-            outer_lvd, outer_uvd = outer_grids[i]._compute_voronoi_edges()
-            x_edges = outer_lvd[0]
-            y_edges = outer_lvd[1]
-
-            for i in range(len(x_edges) - 1):
-                for j in range(len(y_edges) - 1):
-                    x0 = x_edges[i].item()
-                    x1 = x_edges[i + 1].item()
-                    y0 = y_edges[j].item()
-                    y1 = y_edges[j + 1].item()
-
-                    rect = patches.Rectangle(
-                        (x0, y0),
-                        x1 - x0,
-                        y1 - y0,
-                        edgecolor='green',
-                        facecolor='none',
-                        linewidth=1.0,
-                        linestyle='--'
-                    )
-                    rects.append(rect)
-        for rect in rects:
-            ax.add_patch(rect)
-
-        ax.set_title('Core vs Outer Points with old and new Voronoi Cells')
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.legend()
-        ax.grid(True)
-        plt.show()
 
     def __len__(self):
         return int(torch.tensor(self.shape).prod().item())

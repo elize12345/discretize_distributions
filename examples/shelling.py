@@ -77,7 +77,7 @@ if __name__ == "__main__":
     probs_total = disc_g_grid.probs
     locs_total = disc_g_grid.locs
 
-    _, core_tensor, outer_tensor, core_grid, outer_grids = grid.shell(shell=shell_input)
+    _, core_tensor, outer_tensor, core_grid, outer_grids, bounds = grid.shell(shell=shell_input)
     # but this will evaluate all points in gauss into core_grid which we don't want?
     disc_core_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, core_grid)  # redefine a grid
 
@@ -92,11 +92,6 @@ if __name__ == "__main__":
     print(f'Sum of prob in core {probs_core_scaled.sum()}')
     print(f'W2 error {w2_core.item()}')
 
-    # locs_outer = []
-    # for i in range(len(outer_grids)):
-    #     outer_grid = outer_grids[i]
-    #     locs = outer_grid.get_locs()
-    #     locs_outer.append(locs)
     locs_outer = [g.get_locs() for g in outer_grids if len(g) > 0]
     locs_outer_tensor = torch.cat(locs_outer, dim=0) if locs_outer else torch.empty((0, num_dims))
     print(f'Outer grids locs from outer-grids {len(locs_outer_tensor)}')
@@ -108,14 +103,7 @@ if __name__ == "__main__":
 
     print("Are they equal?", set_from_grids == set_actual)
 
-    for i in range(len(outer_grids)):
-        outer_lvd, outer_uvd = outer_grids[i]._compute_voronoi_edges()
-        print(f'lower_vertices_per_dim {outer_lvd}')
-        print(f'upper_vertices_per_dim {outer_uvd}')
-
-    # Regions are unbounded!
-
-    # test - if bound spans whole space then the w2 error should be equal!
+    # test - if bound spans whole space then the w2 error for the core should be equal!
     # shell_inf = [(torch.tensor(-float("inf")), torch.tensor(float("inf"))), (torch.tensor(-float("inf")), torch.tensor(float("inf")))]
     # grid.plot_shell_2d(shell_inf)
     #
