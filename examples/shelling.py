@@ -50,7 +50,7 @@ if __name__ == "__main__":
     x_min, x_max = locs_g[:, 0].min(), locs_g[:, 0].max()
     y_min, y_max = locs_g[:, 1].min(), locs_g[:, 1].max()
     # z_min, z_max = locs_g[:, 2].min(), locs_g[:, 2].max()
-    grid = Grid.from_shape((10, 10), ((x_min, x_max), (y_min, y_max)))
+    grid = Grid.from_shape((20, 10), ((x_min, x_max), (y_min, y_max)))
 
     disc_norm_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, grid)
     locs_norm_grid = disc_norm_grid.locs.detach().numpy()
@@ -73,10 +73,33 @@ if __name__ == "__main__":
     # shelling - boundary input must be floats
     shell_input = [(torch.tensor(1.0), torch.tensor(2.0)), (torch.tensor(-2.0), torch.tensor(1.0))]
 
-    # plot of core and outer regions
-    grid.plot_shell_2d(shell_input)
-
     _, core_tensor, outer_tensor, core_grid, outer_grids, bounds = grid.shell(shell=shell_input)
+
+    unified_grid = grid.unify_grid(core_grid=core_grid, outer_grids=outer_grids, shell=shell_input, bounds=bounds)
+    disc_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, unified_grid)
+    print(f'Unified grid with new partitioning W2 Error {disc_grid.w2.item()}')  # same w2 as before!
+
+    # plot of core and outer regions
+    grid.plot_shell_2d(unified_grid=unified_grid, shell=shell_input)
+
+    probs_grid = disc_grid.probs.detach().numpy()
+    locs_grid = disc_grid.locs.detach().numpy()
+
+    # comparing new partitioning prob mass
+    global_min = min(probs_norm_grid.min(), probs_grid.min())
+    global_max = max(probs_norm_grid.max(), probs_grid.max())
+    s_grid = (probs_norm_grid - global_min) / (global_max - global_min) * 100
+    s_grid2 = (probs_grid - global_min) / (global_max - global_min) * 100
+
+    plt.figure()
+    plt.scatter(locs_norm_grid[:, 0], locs_norm_grid[:, 1], s=s_grid, label="Original Partitioning", color='red', alpha=0.6)
+    plt.scatter(locs_grid[:, 0], locs_grid[:, 1], s=s_grid2, label="Redefined Partitioning", color='blue', alpha=0.6)
+    plt.legend()
+    plt.title("Comparison of grid partitions")
+    plt.show()
+
+    # print(f'Total prob mass original grid: {probs_norm_grid.sum()}')
+    # print(f'Total prob mass new grid: {probs_grid.sum()}')
 
     # testing outer region locations
     # locs_outer = [g.get_locs() for g in outer_grids if len(g) > 0]
@@ -88,41 +111,42 @@ if __name__ == "__main__":
     # set_actual = set(map(tuple, outer_tensor.tolist()))
     # print("Are they equal?", set_from_grids == set_actual)
 
-    # re-calc probs and w2
-    probs_total = disc_norm_grid.probs
-    locs_total = disc_norm_grid.locs
-
-    # re-scale probs
-    disc_core_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, core_grid)  # redefine a grid
-    # core grid only has locations of core
-    core_mask = (locs_total[:, None, :] == core_tensor[None, :, :]).all(dim=-1).any(dim=1)
-    probs_core = disc_core_grid.probs
-    core_mass = probs_total[core_mask].sum()
-    probs_core_scaled = probs_core * core_mass
-
-    w2_core = disc_core_grid.w2
-    print(f'Sum of prob in core {probs_core_scaled.sum()}')
-    print(f'W2 error {w2_core.item()}')
-
-    # outer regions - same principal
-    w2_outer_list = []
-    probs_outer_list = []
-    for idx, grid in enumerate(outer_grids):
-        outer_locs = grid.get_locs()
-        disc_outer_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, grid)
-        outer_mask = (locs_total[:, None, :] == outer_locs[None, :, :]).all(dim=-1).any(dim=1)
-        probs_outer = disc_outer_grid.probs
-        outer_mass = probs_total[outer_mask].sum()
-        probs_outer_scaled = (probs_outer * outer_mass)
-        print(f'Sum of prob in outer region number {idx}: {probs_core_scaled.sum()}')
-        print(f'W2 error outer region number {idx}: {disc_outer_grid.w2}')
-        w2_outer_list.append(disc_outer_grid.w2)
-        probs_outer_list.append(probs_outer_scaled.sum())
-
-    w2_outer = torch.stack(w2_outer_list).sum()
-    probs_outer_total = torch.stack(probs_outer_list).sum()
-    print(f'W2 error outer regions total {w2_outer.item()}')
-    print(f'Total probs outer regions {probs_outer_total}')
+    # # re-calc probs and w2
+    # probs_total = disc_norm_grid.probs
+    # locs_total = disc_norm_grid.locs
+    #
+    # # re-scale probs
+    # disc_core_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, core_grid)  # redefine a grid
+    # # core grid only has locations of core
+    # core_mask = (locs_total[:, None, :] == core_tensor[None, :, :]).all(dim=-1).any(dim=1)
+    # probs_core = disc_core_grid.probs
+    # core_mass = probs_total[core_mask].sum()
+    # probs_core_scaled = probs_core * core_mass
+    #
+    # w2_core = disc_core_grid.w2
+    # print(f'Sum of prob in core {probs_core_scaled.sum()}')
+    # print(f'W2 error {w2_core.item()}')
+    #
+    # # outer regions - same principal
+    # w2_outer_list = []
+    # probs_outer_list = []
+    # for idx, grids in enumerate(outer_grids):
+    #     outer_locs = grids.get_locs()
+    #     disc_outer_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, grids)
+    #     outer_mask = (locs_total[:, None, :] == outer_locs[None, :, :]).all(dim=-1).any(dim=1)
+    #     probs_outer = disc_outer_grid.probs
+    #     outer_mass = probs_total[outer_mask].sum()
+    #     probs_outer_scaled = (probs_outer * outer_mass)
+    #     w2 = disc_outer_grid.w2
+    #     print(f'Sum of prob in outer region number {idx}: {probs_core_scaled.sum()}')
+    #     print(f'W2 error outer region number {idx}: {w2}')
+    #     w2_outer_list.append(w2)
+    #     probs_outer_list.append(probs_outer_scaled.sum())
+    #
+    # w2_outer = torch.stack(w2_outer_list).sum()
+    # probs_outer_total = torch.stack(probs_outer_list).sum()
+    # print(f'W2 error outer regions total {w2_outer.item()}')
+    # print(f'Total probs outer regions {probs_outer_total}')
 
     # test - if bound spans whole space then the w2 error for the core should be equal!
     # shell_inf = [(torch.tensor(-float("inf")), torch.tensor(float("inf"))), (torch.tensor(-float("inf")), torch.tensor(float("inf")))]
@@ -146,3 +170,4 @@ if __name__ == "__main__":
     #
     # print(f'Sum of prob in core {probs_core_scaled.sum()}')
     # print(f'W2 error {w2_core.item()}')
+

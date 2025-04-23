@@ -7,6 +7,7 @@ import discretize_distributions.tensors as tensors
 import ot
 import itertools
 
+
 class GridCell:
     def __init__(self, loc: torch.Tensor, lower: torch.Tensor, upper: torch.Tensor):
         self.loc = loc  # (d,)
@@ -185,11 +186,11 @@ class Grid:
 
                 if mask.any():  # if mask has any points that match pattern than make a grid and store it! Should be
                     # 3^D -1 grids (exclude the core)
-                    print(f"\n Pattern: {pattern}")
-                    print(f'Points in region {len(outer_tensor[mask])}')
-                    print("Bound per dimension:")
-                    for i, b in enumerate(bound_per_grid):
-                        print(f"  Dim {i}: {b}")
+                    # print(f"\n Pattern: {pattern}")
+                    # print(f'Number of points in region: {len(outer_tensor[mask])}')
+                    # print("Bound per dimension:")
+                    # for i, b in enumerate(bound_per_grid):
+                    #     print(f"  Dim {i}: {b}")
 
                     grid = Grid.from_points(outer_tensor[mask], bounds=bound_per_grid)
                     outer_grids.append(grid)
@@ -197,15 +198,55 @@ class Grid:
 
                     outer_lvd, outer_uvd = grid._compute_voronoi_edges(bounds=bound_per_grid)
 
-                    print("Voronoi Edges (lower, upper):")
-                    for dim in range(len(outer_lvd)):
-                        print(f"  Dim {dim}:")
-                        print(f"    Lower: {outer_lvd[dim]}")
-                        print(f"    Upper: {outer_uvd[dim]}")
+                    # print("Voronoi Edges (lower, upper):")
+                    # for dim in range(len(outer_lvd)):
+                    #     print(f"  Dim {dim}:")
+                    #     print(f"    Lower: {outer_lvd[dim]}")
+                    #     print(f"    Upper: {outer_uvd[dim]}")
 
         return outer_grids, bounds
 
-    def plot_shell_2d(self, shell):
+    def unify_grid(self, core_grid, outer_grids, shell, bounds):
+        """
+        Combine grids to one unified grid
+        """
+        dim = self.dim
+        locs_per_dim = self.locs_per_dim
+
+        # all vertices
+        lower_vertices_per_dim = [[] for _ in range(dim)]
+        upper_vertices_per_dim = [[] for _ in range(dim)]
+
+        # core vertices
+        if core_grid is not None:
+            lvd_core, uvd_core = core_grid._compute_voronoi_edges(bounds=shell)  # bounded by shell
+            for d in range(dim):
+                lower_vertices_per_dim[d].append(lvd_core[d])
+                upper_vertices_per_dim[d].append(uvd_core[d])
+
+        # outer vertices
+        for i, outer_grid in enumerate(outer_grids):
+            lvd, uvd = outer_grid._compute_voronoi_edges(bounds=bounds[i])  # bounded by bounds found due to core shell
+            for d in range(dim):
+                lower_vertices_per_dim[d].append(lvd[d])
+                upper_vertices_per_dim[d].append(uvd[d])
+
+        # merge all
+        final_lower = []
+        final_upper = []
+        for d in range(dim):
+            lower_d = torch.cat(lower_vertices_per_dim[d])
+            upper_d = torch.cat(upper_vertices_per_dim[d])
+            final_lower.append(torch.sort(torch.unique(lower_d)).values)
+            final_upper.append(torch.sort(torch.unique(upper_d)).values)
+
+        return PartitionedGrid(
+            locs_per_dim=locs_per_dim,
+            lower_vertices_per_dim=final_lower,
+            upper_vertices_per_dim=final_upper
+        )  # new partitioned grid!
+
+    def plot_shell_2d(self, unified_grid, shell):
         """shell is input shell"""
         lower_vertices_per_dim, upper_vertices_per_dim = self._compute_voronoi_edges()
         shell_tensor, core_tensor, outer_tensor, core_grid, outer_grids, bounds = self.shell(shell)
@@ -224,23 +265,47 @@ class Grid:
             color = cmap(idx % 10)  # tab10 has 10 unique colors
             ax.scatter(outer_locs[:, 0], outer_locs[:, 1], color=color, alpha=0.6)
 
-        # for i in range(len(lower_vertices_per_dim[0])):
-        #     for j in range(len(lower_vertices_per_dim[1])):
-        #         x0 = lower_vertices_per_dim[0][i].item()
-        #         x1 = upper_vertices_per_dim[0][i].item()
-        #         y0 = lower_vertices_per_dim[1][j].item()
-        #         y1 = upper_vertices_per_dim[1][j].item()
-        #         rect = patches.Rectangle(
-        #             (x0, y0),
-        #             x1 - x0,
-        #             y1 - y0,
-        #             edgecolor='gray',
-        #             facecolor='none',
-        #             linewidth=0.5,
-        #             # linestyle=':'
-        #         )
-        #         ax.add_patch(rect)
+        # original partitioning
+        for i in range(len(lower_vertices_per_dim[0])):
+            for j in range(len(upper_vertices_per_dim[1])):
+                x0 = lower_vertices_per_dim[0][i].item()
+                x1 = upper_vertices_per_dim[0][i].item()
+                y0 = lower_vertices_per_dim[1][j].item()
+                y1 = upper_vertices_per_dim[1][j].item()
 
+                rect = patches.Rectangle(
+                    (x0, y0),
+                    x1 - x0,
+                    y1 - y0,
+                    edgecolor='yellow',
+                    facecolor='none',
+                    linewidth=1.2,
+                    linestyle='-'
+                )
+                ax.add_patch(rect)
+
+        # unified grid partitions
+        lower_vertices = unified_grid.lower_vertices_per_dim
+        upper_vertices = unified_grid.upper_vertices_per_dim
+        for i in range(len(lower_vertices[0])):
+            for j in range(len(lower_vertices[1])):
+                x0 = lower_vertices[0][i].item()
+                x1 = upper_vertices[0][i].item()
+                y0 = lower_vertices[1][j].item()
+                y1 = upper_vertices[1][j].item()
+
+                rect = patches.Rectangle(
+                    (x0, y0),
+                    x1 - x0,
+                    y1 - y0,
+                    edgecolor='purple',
+                    facecolor='none',
+                    linewidth=1.2,
+                    linestyle='-'
+                )
+                ax.add_patch(rect)
+
+        # core partitioning
         for i in range(len(core_lower_vertices_per_dim[0])):
             for j in range(len(core_lower_vertices_per_dim[1])):
                 x0 = core_lower_vertices_per_dim[0][i].item()
@@ -257,39 +322,6 @@ class Grid:
                     linestyle='-'
                 )
                 ax.add_patch(rect)
-        #
-        # for grid, bound in zip(outer_grids, bounds):
-        #     lvd, uvd = grid._compute_voronoi_edges(bounds=bound)
-        #
-        #     lvd = self.clamp_voronoi_edges(lvd, 2)
-        #     uvd = self.clamp_voronoi_edges(uvd, 2)
-        #
-        #     for i in range(len(lvd[0]) - 1):
-        #         for j in range(len(lvd[1]) - 1):
-        #             x0, x1 = lvd[0][i].item(), uvd[0][i].item()
-        #             y0, y1 = lvd[1][j].item(), uvd[1][j].item()
-        #             rect = patches.Rectangle((x0, y0), x1 - x0, y1 - y0, edgecolor='green', linestyle='--',
-        #                                      facecolor='none')
-        #             ax.add_patch(rect)
-
-        # rects = []
-        # for i, bound in enumerate(bounds):
-        #     x_min, x_max = bound[0]
-        #     y_min, y_max = bound[1]
-        #     rect = patches.Rectangle(
-        #         (x_min, y_min),
-        #         x_max - x_min,
-        #         y_max - y_min,
-        #         edgecolor='green',
-        #         facecolor='none',
-        #         linewidth=1.5,
-        #         linestyle='--',
-        #         label='Outer bounds' if i == 0 else None
-        #     )
-        #     rects.append(rect)
-        #
-        # for rect in rects:
-        #     ax.add_patch(rect)
 
         ax.set_title('Core of Shell vs Outer-Region Points in 2D')
         ax.set_xlabel('X')
@@ -297,20 +329,6 @@ class Grid:
         ax.legend()
         ax.grid(True)
         plt.show()
-
-    def clamp_voronoi_edges(self, vertices_per_dim, clamp_val=5.0):
-        """
-        replaces -inf/inf with clamped values to use for plotting
-        """
-        clamped = []
-        for v in vertices_per_dim:
-            clamped_dim = torch.where(
-                torch.isinf(v),
-                torch.sign(v) * clamp_val,  # replaces the inf value
-                v
-            )
-            clamped.append(clamped_dim)
-        return clamped
 
     def voronoi_edge_shell(self, shell):
         """Finds the closest Voronoi edge to the input shell"""
@@ -370,3 +388,13 @@ class Grid:
         lower = torch.stack([self.lower_vertices_per_dim[d][i] for d, i in enumerate(multi_idx)])
         upper = torch.stack([self.upper_vertices_per_dim[d][i] for d, i in enumerate(multi_idx)])
         return GridCell(loc=loc, lower=lower, upper=upper)
+
+class PartitionedGrid(Grid):
+    def __init__(self, locs_per_dim: list, lower_vertices_per_dim: list, upper_vertices_per_dim: list):
+        self.lower_vertices_per_dim = lower_vertices_per_dim
+        self.upper_vertices_per_dim = upper_vertices_per_dim
+        super().__init__(locs_per_dim)  # as its subclass of Grid, it initializes other attributes
+
+    def _compute_voronoi_edges(self, bounds=None):  # during init it calls this function and overrides
+        # the function from Grid
+        return self.lower_vertices_per_dim, self.upper_vertices_per_dim
