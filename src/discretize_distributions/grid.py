@@ -164,7 +164,7 @@ class Grid:
             #   ( 0, -1), ( 0, 0), ( 0, 1),
             #   ( 1, -1), ( 1, 0), ( 1, 1)
             all_patterns.remove((0,) * n_dims)  # this excludes all patterns that is just 0,0,... as it is the core
-
+            print(f'No. of patter combinations: {len(all_patterns)}')
             for pattern in all_patterns:
                 bound_per_grid = []  # reset for each grid, for each outer_grid the bound is a list of min, max
                 # values per dimension
@@ -291,7 +291,7 @@ class Grid:
         # for rect in rects:
         #     ax.add_patch(rect)
 
-        ax.set_title('Core vs Outer Points with old and new Voronoi Cells')
+        ax.set_title('Core of Shell vs Outer-Region Points in 2D')
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.legend()

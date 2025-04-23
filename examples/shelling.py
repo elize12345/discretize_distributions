@@ -40,68 +40,89 @@ if __name__ == "__main__":
     )
 
     # original method using signature operator
-    disc_g_sig = dd.discretization_generator(norm, num_locs=100)  # normal signature
-    locs_g_sig = disc_g_sig.locs.detach().numpy()
-    probs_g_sig = disc_g_sig.probs.detach().numpy()
-    print(f'W2 error original Signature operation: {disc_g_sig.w2}')
+    disc_norm_sig = dd.discretization_generator(norm, num_locs=100)  # normal signature
+    locs_norm_sig = disc_norm_sig.locs.detach().numpy()
+    probs_norm_sig = disc_norm_sig.probs.detach().numpy()
+    print(f'W2 error original Signature operation: {disc_norm_sig.w2}')
     # print(f'Number of signature locations: {len(locs_g_sig)}')
 
-    locs_g = disc_g_sig.locs
+    locs_g = disc_norm_sig.locs
     x_min, x_max = locs_g[:, 0].min(), locs_g[:, 0].max()
     y_min, y_max = locs_g[:, 1].min(), locs_g[:, 1].max()
+    # z_min, z_max = locs_g[:, 2].min(), locs_g[:, 2].max()
     grid = Grid.from_shape((10, 10), ((x_min, x_max), (y_min, y_max)))
 
-    disc_g_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, grid)
-    locs_g_grid = disc_g_grid.locs.detach().numpy()
-    probs_g_grid = disc_g_grid.probs.detach().numpy()
-    print(f'W2 error grid operation: {disc_g_grid.w2.item()}')
+    disc_norm_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, grid)
+    locs_norm_grid = disc_norm_grid.locs.detach().numpy()
+    probs_norm_grid = disc_norm_grid.probs.detach().numpy()
+    print(f'W2 error grid operation: {disc_norm_grid.w2.item()}')
 
     # scaling to compare prob mass across grid and signature
-    global_min = min(probs_g_grid.min(), probs_g_sig.min())
-    global_max = max(probs_g_grid.max(), probs_g_sig.max())
-    s_grid = (probs_g_grid - global_min) / (global_max - global_min) * 100
-    s_sig = (probs_g_sig - global_min) / (global_max - global_min) * 100
+    global_min = min(probs_norm_grid.min(), probs_norm_sig.min())
+    global_max = max(probs_norm_grid.max(), probs_norm_sig.max())
+    s_grid = (probs_norm_grid - global_min) / (global_max - global_min) * 100
+    s_sig = (probs_norm_sig - global_min) / (global_max - global_min) * 100
 
     plt.figure()
-    plt.scatter(locs_g_grid[:, 0], locs_g_grid[:, 1], s=s_grid, label="Grid", color='red', alpha=0.6)
-    plt.scatter(locs_g_sig[:, 0], locs_g_sig[:, 1], s=s_sig, label="Signature", color='blue', alpha=0.6)
+    plt.scatter(locs_norm_grid[:, 0], locs_norm_grid[:, 1], s=s_grid, label="Grid", color='red', alpha=0.6)
+    plt.scatter(locs_norm_sig[:, 0], locs_norm_sig[:, 1], s=s_sig, label="Signature", color='blue', alpha=0.6)
     plt.legend()
     plt.title("Comparison of grid locations and signature locations")
     plt.show()
 
     # shelling - boundary input must be floats
-    shell_input = [(torch.tensor(-2.0), torch.tensor(2.0)), (torch.tensor(-1.0), torch.tensor(1.0))]
+    shell_input = [(torch.tensor(1.0), torch.tensor(2.0)), (torch.tensor(-2.0), torch.tensor(1.0))]
+
+    # plot of core and outer regions
     grid.plot_shell_2d(shell_input)
 
-    # re-calc probs and w2
-    probs_total = disc_g_grid.probs
-    locs_total = disc_g_grid.locs
-
     _, core_tensor, outer_tensor, core_grid, outer_grids, bounds = grid.shell(shell=shell_input)
-    # but this will evaluate all points in gauss into core_grid which we don't want?
-    disc_core_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, core_grid)  # redefine a grid
+
+    # testing outer region locations
+    # locs_outer = [g.get_locs() for g in outer_grids if len(g) > 0]
+    # locs_outer_tensor = torch.cat(locs_outer, dim=0) if locs_outer else torch.empty((0, num_dims))
+    # print(f'Outer grids locs from outer-grids {len(locs_outer_tensor)}')
+    # print(f"Actual outer tensor locs {len(outer_tensor)}")
+    # print(f'No. of outer-grids {len(outer_grids)}')
+    # set_from_grids = set(map(tuple, locs_outer_tensor.tolist()))
+    # set_actual = set(map(tuple, outer_tensor.tolist()))
+    # print("Are they equal?", set_from_grids == set_actual)
+
+    # re-calc probs and w2
+    probs_total = disc_norm_grid.probs
+    locs_total = disc_norm_grid.locs
 
     # re-scale probs
+    disc_core_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, core_grid)  # redefine a grid
+    # core grid only has locations of core
     core_mask = (locs_total[:, None, :] == core_tensor[None, :, :]).all(dim=-1).any(dim=1)
     probs_core = disc_core_grid.probs
     core_mass = probs_total[core_mask].sum()
     probs_core_scaled = probs_core * core_mass
 
     w2_core = disc_core_grid.w2
-
     print(f'Sum of prob in core {probs_core_scaled.sum()}')
     print(f'W2 error {w2_core.item()}')
 
-    locs_outer = [g.get_locs() for g in outer_grids if len(g) > 0]
-    locs_outer_tensor = torch.cat(locs_outer, dim=0) if locs_outer else torch.empty((0, num_dims))
-    print(f'Outer grids locs from outer-grids {len(locs_outer_tensor)}')
-    print(f"Actual outer tensor locs {len(outer_tensor)}")
-    print(f'No outer-grids {len(outer_grids)}')
+    # outer regions - same principal
+    w2_outer_list = []
+    probs_outer_list = []
+    for idx, grid in enumerate(outer_grids):
+        outer_locs = grid.get_locs()
+        disc_outer_grid = DiscretizedMixtureMultivariateNormalQuantization(norm, grid)
+        outer_mask = (locs_total[:, None, :] == outer_locs[None, :, :]).all(dim=-1).any(dim=1)
+        probs_outer = disc_outer_grid.probs
+        outer_mass = probs_total[outer_mask].sum()
+        probs_outer_scaled = (probs_outer * outer_mass)
+        print(f'Sum of prob in outer region number {idx}: {probs_core_scaled.sum()}')
+        print(f'W2 error outer region number {idx}: {disc_outer_grid.w2}')
+        w2_outer_list.append(disc_outer_grid.w2)
+        probs_outer_list.append(probs_outer_scaled.sum())
 
-    set_from_grids = set(map(tuple, locs_outer_tensor.tolist()))
-    set_actual = set(map(tuple, outer_tensor.tolist()))
-
-    print("Are they equal?", set_from_grids == set_actual)
+    w2_outer = torch.stack(w2_outer_list).sum()
+    probs_outer_total = torch.stack(probs_outer_list).sum()
+    print(f'W2 error outer regions total {w2_outer.item()}')
+    print(f'Total probs outer regions {probs_outer_total}')
 
     # test - if bound spans whole space then the w2 error for the core should be equal!
     # shell_inf = [(torch.tensor(-float("inf")), torch.tensor(float("inf"))), (torch.tensor(-float("inf")), torch.tensor(float("inf")))]
