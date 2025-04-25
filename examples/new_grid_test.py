@@ -74,7 +74,9 @@ if __name__ == "__main__":
     # union of grid locations from both signatures
     x_min, x_max = locs_gmm[:, 0].min(), locs_gmm[:, 0].max()
     y_min, y_max = locs_gmm[:, 1].min(), locs_gmm[:, 1].max()
-    grid_union = Grid.from_shape((20, 10), ((x_min, x_max), (y_min, y_max)))
+    # grid_union = Grid.from_shape((20, 10), ((x_min, x_max), (y_min, y_max)))
+    grid_list = [torch.sort(torch.unique(locs_gmm[:, i]))[0] for i in range(locs_gmm.shape[1])]
+    grid_union = Grid(locs_per_dim=grid_list)
 
     # approximating signature grids by just one
     mean = (gmm.component_distribution.mean[0] + gmm.component_distribution.mean[1]) / 2
@@ -153,7 +155,7 @@ if __name__ == "__main__":
 
     plt.legend()
     # plt.title("Unified grid with bounding box")
-    # plt.savefig(f"figures/only_grid_locations_{user_choice}_{user_choice2}.svg")
+    plt.savefig(f"figures/Test2/only_grid_locations_{user_choice}_{user_choice2}.svg")
     plt.show()
 
     # Plot 3
@@ -173,6 +175,6 @@ if __name__ == "__main__":
 
     plt.legend()
     # plt.title("Comparison with bounding box")
-    # plt.savefig(f"figures/all_locations_{user_choice}_{user_choice2}.svg")
+    plt.savefig(f"figures/Test2/all_locations_{user_choice}_{user_choice2}.svg")
     plt.show()
 

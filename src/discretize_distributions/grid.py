@@ -393,8 +393,8 @@ class PartitionedGrid(Grid):
     def __init__(self, locs_per_dim: list, lower_vertices_per_dim: list, upper_vertices_per_dim: list):
         self.lower_vertices_per_dim = lower_vertices_per_dim
         self.upper_vertices_per_dim = upper_vertices_per_dim
-        super().__init__(locs_per_dim)  # as its subclass of Grid, it initializes other attributes
+        super().__init__(locs_per_dim)  # as its subclass of Grid, it initializes other attributes using init from Grid
 
-    def _compute_voronoi_edges(self, bounds=None):  # during init it calls this function and overrides
+    def _compute_voronoi_edges(self, bounds=None):  # during init it calls the original function but this overrides it
         # the function from Grid
         return self.lower_vertices_per_dim, self.upper_vertices_per_dim

@@ -56,7 +56,7 @@ def grid_discretize_multi_norm_dist(
         utils.cdf((grid.lower_vertices_per_dim[dim] - mean[dim]) / std[dim])
         for dim in range(grid.dim)
     ]
-    mesh = torch.meshgrid(*probs_per_dim, indexing='ij')
+    mesh = torch.meshgrid(*probs_per_dim, indexing='ij')  # cartesian product
     stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
     probs = stacked.prod(-1)
 
