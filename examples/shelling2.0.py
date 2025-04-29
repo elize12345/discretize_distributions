@@ -1,7 +1,7 @@
 import torch
 import discretize_distributions as dd
 from discretize_distributions.utils import calculate_w2_disc_uni_stand_normal
-from discretize_distributions.discretize import GRID_CONFIGS, OPTIMAL_1D_GRIDS
+from discretize_distributions.discretize import GRID_CONFIGS, OPTIMAL_1D_GRIDS, w2_multi_norm_dist
 from discretize_distributions.grid import Grid
 from matplotlib import pyplot as plt, patches
 from scipy.spatial import Voronoi, voronoi_plot_2d
@@ -48,8 +48,10 @@ if __name__ == "__main__":
 
     # shelling - boundary input must be floats
     shell_input = [(torch.tensor(0.0), torch.tensor(1.5)), (torch.tensor(-1.5), torch.tensor(1.5))]
-    # _, _, _, R1, _, _ = grid_w2_optimal.shell(shell=shell_input)  # grid of shell inside
-    interval_tensor = torch.tensor([[a.item(), b.item()] for (a, b) in shell_input])  # grid points on shell a problem?
+    # _, _, _, R1, _, _ = grid_w2_optimal.shell(shell=shell_input)  # grid of shell inside based on signature's
+    # initial locations
+    interval_tensor = torch.tensor([[a.item() + 0.1, b.item() - 0.1] for (a, b) in shell_input])  # grid points based
+    # on shell, 0.1 as padding so no points on boundary
     R1 = Grid.from_shape((10, 10), interval_tensor, bounds=shell_input)
     disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(norm, R1)
     disc_R1_locs = disc_R1.locs
@@ -94,24 +96,23 @@ if __name__ == "__main__":
     # calculate_w2_disc_uni_stand_normal from utils can be used for the Expectation but setting bounds
     # li,ui to -inf and inf instead for WHOLE SPACE
     # not sure how to get the expectation with unbounded region
-    # mean = norm.mean  # [dim]
-    # std = norm.stddev  # [dim]
-    # # y = [torch.tensor(2.0).unsqueeze(0), torch.tensor(2.0).unsqueeze(0)]
-    # y = mean
-    # print(f'mean: {mean}')
-    # scaled_locs_per_dim = [((y[dim] - mean[dim]) / std[dim]).unsqueeze(0) for dim in range(num_dims)]
-    # w2_per_dim = [calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
-    # w2 = torch.stack(w2_per_dim).pow(2).sum().sqrt()
-    # print(f'W2 error whole space to z: {w2}')
+    mean = norm.mean  # [dim]
+    std = norm.stddev  # [dim]
 
-    # Instead just use signature operator for num_locs=1 - not same as solving integral i believe ...
-    disc_whole_space = dd.discretization_generator(norm, num_locs=1)
-    z = disc_whole_space.locs  # placed z at mean - what if we place it somewhere else?
-    print(f'z: {z}')
+    # y = [torch.tensor(2.0).unsqueeze(0), torch.tensor(2.0).unsqueeze(0)]
+    # z = mean
+    z = torch.tensor([2.0, 2.0])
+    print(f'mean: {mean}')
+    w2 = w2_multi_norm_dist(norm=dd.MultivariateNormal(loc=locs, covariance_matrix=covariance_matrix * (1 / (np.sqrt(num_dims)))), signature_locs=z)
+
+    # Test to check above ^ optimal w2-signature with 1 loc has equal w2 error for z=mean
+    disc = dd.discretization_generator(norm, num_locs=1)
+    print(f'W2 error optimal location for 1 point: {disc.w2}')
+    print(disc.locs)
 
     # term 2: integral over just boundary box of shell R1 - use 'grid_discretize_multi_norm_dist'
     # for one location, z and one region
-    R1_outer = Grid(locs_per_dim=[z[0, 0].unsqueeze(0), z[0, 1].unsqueeze(0)], bounds=shell_input)
+    R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
     # arbitrary z location
     R1_lower_vertices_per_dim, R1_upper_vertices_per_dim = (R1_outer.lower_vertices_per_dim,
                                                             R1_outer.upper_vertices_per_dim)
@@ -119,12 +120,13 @@ if __name__ == "__main__":
     disc_R1_outer_locs = disc_R1_outer.locs
     disc_R1_outer_probs = disc_R1_outer.probs.detach().numpy()  # mass in grid partitions
     print(f'Prob mass of z: {disc_R1_outer_probs.sum()}')
+    print(f'Location z: {disc_R1_outer_locs}')
 
     # W2 calc
     print(f'W2 error for inner R1(k) locations: {disc_R1.w2.item()}')
-    print(f'W2 error whole space to z: {disc_whole_space.w2.item()}')
+    print(f'W2 error whole space to z: {w2}')
     print(f'W2 error for all inside mass of R1 to location z: {disc_R1_outer.w2.item()}')
-    print(f"Total W2: R1(k) + (expectation - R1) = {disc_R1.w2.item() + (disc_whole_space.w2.item()-disc_R1_outer.w2.item())}")
+    print(f"Total W2: R1(k) + (expectation - R1) = {disc_R1.w2.item() + (w2-disc_R1_outer.w2.item())}")
 
     global_min = min(disc_R1_outer_probs.min(), disc_probs.min())
     global_max = max(disc_R1_outer_probs.max(), disc_probs.max())

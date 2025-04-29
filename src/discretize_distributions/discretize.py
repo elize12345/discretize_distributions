@@ -118,6 +118,27 @@ def optimal_discretize_multi_norm_dist(
 
     return locs, probs, w2
 
+def w2_multi_norm_dist(norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
+                       signature_locs: torch.Tensor) -> torch.Tensor:
+    mean = norm.mean  # [dim]
+    cov = norm.covariance_matrix
+
+    # eigenvalues
+    eigvals, eigvecs = torch.linalg.eigh(cov)
+
+    # transform space T = diag(eigvals)^(1/2) @ V^T
+    T = eigvecs.T @ torch.diag(1/eigvals.sqrt())   # multiplies from the right
+    scaled_locs = (signature_locs - mean) @ T.T
+
+    # w2 calc
+    w2_per_dim_squared = []
+    for i in range((mean.shape[0])):
+        locs = scaled_locs[:, i]
+        w2_i = utils.calculate_w2_disc_uni_stand_normal(locs)
+        w2_per_dim_squared.append(w2_i.pow(2) * eigvals[i])  # scale back
+
+    w2_squared = torch.stack(w2_per_dim_squared).sum()
+    return w2_squared.sqrt()
 
 def get_optimal_grid_config(eigvals: torch.Tensor, num_locs: int) -> torch.Tensor:
     """
