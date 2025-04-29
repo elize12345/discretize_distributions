@@ -47,8 +47,12 @@ def grid_discretize_multi_norm_dist(
     assert len(norm.event_shape) == 1 and norm.event_shape[0] == grid.dim, 'dimensions grid and norm should match'
 
     locs = grid.get_locs()
-    mean = norm.mean  # [dim]
-    std = norm.stddev  # [dim]
+    if norm.mean.dim() == 2 and norm.mean.size(0) == 1:
+        mean = norm.mean.squeeze(0)  # [dim]
+        std = norm.stddev.squeeze(0)  # [dim]
+    else:
+        mean = norm.mean
+        std = norm.stddev
 
     # probability computation, to be simplified:
     probs_per_dim = [
@@ -118,10 +122,16 @@ def optimal_discretize_multi_norm_dist(
 
     return locs, probs, w2
 
-def w2_multi_norm_dist(norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
+def w2_multi_norm_dist_for_set_locations(norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
                        signature_locs: torch.Tensor) -> torch.Tensor:
-    mean = norm.mean  # [dim]
-    cov = norm.covariance_matrix
+    # mean = norm.mean  # [dim]
+    # cov = norm.covariance_matrix  # [dim, dim]
+    if norm.mean.dim() == 2 and norm.mean.size(0) == 1:
+        mean = norm.mean.squeeze(0)  # [dim]
+        cov = norm.covariance_matrix.squeeze(0)  # [dim, dim]
+    else:
+        mean = norm.mean
+        cov = norm.covariance_matrix
 
     # eigenvalues
     eigvals, eigvecs = torch.linalg.eigh(cov)
@@ -130,10 +140,10 @@ def w2_multi_norm_dist(norm: Union[MultivariateNormal, torch.distributions.Multi
     T = eigvecs.T @ torch.diag(1/eigvals.sqrt())   # multiplies from the right
     scaled_locs = (signature_locs - mean) @ T.T
 
-    # w2 calc
+    # w2 calc according to prop 9 and corollary 10 in paper "Finite .."
     w2_per_dim_squared = []
     for i in range((mean.shape[0])):
-        locs = scaled_locs[:, i]
+        locs = scaled_locs.view(1, -1)[:, i]
         w2_i = utils.calculate_w2_disc_uni_stand_normal(locs)
         w2_per_dim_squared.append(w2_i.pow(2) * eigvals[i])  # scale back
 

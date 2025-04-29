@@ -82,19 +82,16 @@ class Grid:
             lower_vertices_per_dim.append(lower)
             upper_vertices_per_dim.append(upper)
 
-            # lower = torch.cat([
-            #     torch.full((1,), -torch.inf, device=dim_locs.device, dtype=dim_locs.dtype),
-            #     midlocs
-            # ])
-            # upper = torch.cat([
-            #     midlocs,
-            #     torch.full((1,), torch.inf, device=dim_locs.device, dtype=dim_locs.dtype),
-            # ])
-            # lower_vertices_per_dim.append(lower)
-            # upper_vertices_per_dim.append(upper)
         return lower_vertices_per_dim, upper_vertices_per_dim
 
-    def shell(self, shell):
+    @staticmethod
+    def shell(shell, shape, padding=0.1):
+        """Computes uniform grid inside shell region"""
+        interval_tensor = torch.tensor(
+            [[a.item() + padding, b.item() - padding] for (a, b) in shell])
+        return Grid.from_shape(shape, interval_tensor, bounds=shell)
+
+    def shell_from_grid(self, shell):
         """Computes the outer and core points based on input shell
         param: input 'shell' list of tensors for max, min values per dim of wanted shell
         """
@@ -352,25 +349,9 @@ class Grid:
             lower_index = torch.argmin(torch.abs(lower - min_shell))
             upper_index = torch.argmin(torch.abs(upper - max_shell))
 
-            # this is for the largest lower edge ≤ shell_min and smallest upper edge ≥ shell_max
-
-            # this will give all values where boolean is True, if an edge is lower than the shell input
-            # lower_index = torch.nonzero(lower <= min_shell, as_tuple=True)[0]
-            # # then we select the last index which satisfies, so that is the max value the shell can be
-            # lower_index = lower_index[-1] if len(lower_index) > 0 else 0
-            # upper_index = torch.nonzero(upper >= max_shell, as_tuple=True)[0]
-            # upper_index = upper_index[0] if len(upper_index) > 0 else -1
-
             vor_shell_min = lower[lower_index]
             vor_shell_max = upper[upper_index]
             vor_shell.append((vor_shell_min, vor_shell_max))
-
-            # check
-            # min_matches = torch.any(torch.isclose(lower, vor_shell_min, atol=1e-6))
-            # max_matches = torch.any(torch.isclose(upper, vor_shell_max, atol=1e-6))
-            #
-            # if not (min_matches and max_matches):
-            #     print(f"Dimension {dim}: shell ({min_shell.item()}, {max_shell.item()}) not aligned with Voronoi edges.")
 
         return vor_shell
 

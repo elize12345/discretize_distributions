@@ -2,7 +2,7 @@ from .categorical_float import CategoricalFloat, compress_categorical_floats, cr
 from .mixture import MixtureMultivariateNormal, compress_mixture_multivariate_normal, unique_mixture_multivariate_normal
 from .multivariate_normal import MultivariateNormal
 from .discretizations import (discretization_generator, DiscretizedMultivariateNormal, DiscretizedMixtureMultivariateNormal,
-DiscretizedMixtureMultivariateNormalQuantization, DiscretizedCategoricalFloat)
+DiscretizedMixtureMultivariateNormalQuantization, DiscretizedMixtureMultivariateNormalQuantizationShell, DiscretizedCategoricalFloat)
 
 
 __all__ = [
@@ -12,6 +12,7 @@ __all__ = [
     'DiscretizedMultivariateNormal',
     'DiscretizedMixtureMultivariateNormal',
     'DiscretizedMixtureMultivariateNormalQuantization',
+    'DiscretizedMixtureMultivariateNormalQuantizationShell',
     'DiscretizedCategoricalFloat',
     'compress_mixture_multivariate_normal',
     'unique_mixture_multivariate_normal',

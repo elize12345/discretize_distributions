@@ -1,12 +1,12 @@
 import torch
 import discretize_distributions as dd
 from discretize_distributions.utils import calculate_w2_disc_uni_stand_normal
-from discretize_distributions.discretize import GRID_CONFIGS, OPTIMAL_1D_GRIDS, w2_multi_norm_dist
+from discretize_distributions.discretize import GRID_CONFIGS, OPTIMAL_1D_GRIDS, w2_multi_norm_dist_for_set_locations
 from discretize_distributions.grid import Grid
-from matplotlib import pyplot as plt, patches
+from matplotlib import pyplot as plt, patches, cm
 from scipy.spatial import Voronoi, voronoi_plot_2d
 from discretize_distributions.distributions import DiscretizedMixtureMultivariateNormal, \
-    DiscretizedMixtureMultivariateNormalQuantization
+    DiscretizedMixtureMultivariateNormalQuantization, DiscretizedMixtureMultivariateNormalQuantizationShell
 import GMMWas
 import numpy as np
 
@@ -29,33 +29,28 @@ if __name__ == "__main__":
     probs = probs / probs.sum(dim=-1, keepdim=True)
 
     # creates gmm with only diagonal covariances
-    norm = dd.MixtureMultivariateNormal(
-        mixture_distribution=torch.distributions.Categorical(probs=probs),
-        component_distribution=dd.MultivariateNormal(
+    norm = dd.MultivariateNormal(
             loc=locs,
             covariance_matrix=covariance_matrix * (1 / (np.sqrt(num_dims)))  # scaling
         )
-    )
 
     # Calculation of region R1 - take Voronoi partitions and grid for inside shell, then use normal method
     # 'grid_discretize_multi_norm_dist' to calculate W2 error - how to generate grid? just choose uniform grid?
     disc_w2_optimal = dd.discretization_generator(norm, num_locs=100)  # w2 optimal grid
-    disc_locs = disc_w2_optimal.locs
-    disc_probs = disc_w2_optimal.probs.detach().numpy()
-
+    disc_locs = disc_w2_optimal.locs.squeeze(0)
+    disc_probs = disc_w2_optimal.probs.squeeze(0).detach().numpy()
     grid_list = [torch.sort(torch.unique(disc_locs[:, i]))[0] for i in range(disc_locs.shape[1])]
     grid_w2_optimal = Grid(locs_per_dim=grid_list)
 
-    # shelling - boundary input must be floats
-    shell_input = [(torch.tensor(0.0), torch.tensor(1.5)), (torch.tensor(-1.5), torch.tensor(1.5))]
-    # _, _, _, R1, _, _ = grid_w2_optimal.shell(shell=shell_input)  # grid of shell inside based on signature's
-    # initial locations
-    interval_tensor = torch.tensor([[a.item() + 0.1, b.item() - 0.1] for (a, b) in shell_input])  # grid points based
-    # on shell, 0.1 as padding so no points on boundary
-    R1 = Grid.from_shape((10, 10), interval_tensor, bounds=shell_input)
-    disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(norm, R1)
-    disc_R1_locs = disc_R1.locs
-    disc_R1_probs = disc_R1.probs.detach().numpy()  # mass in grid partitions
+    # shelling input
+    # shell_input = [(torch.tensor(0.0), torch.tensor(1.5)), (torch.tensor(-1.5), torch.tensor(1.5))]
+    # shell around mean using standard deviation
+    mean = norm.mean.squeeze(0)
+    std = norm.stddev.squeeze(0)
+    shell_input = [(mean[0]-std[0], mean[0]+std[0]), (mean[1]-std[1], mean[1]+std[1])]
+    R1 = Grid.shell(shell_input, (10, 10))
+    disc_R1_locs, disc_R1_probs, w2_disc_R1 = dd.discretize_multi_norm_dist(norm, num_locs=None, grid=R1)
+    disc_R1_probs = disc_R1_probs.detach().numpy()  # mass in grid partitions
 
     global_min = min(disc_R1_probs.min(), disc_probs.min())
     global_max = max(disc_R1_probs.max(), disc_probs.max())
@@ -96,19 +91,14 @@ if __name__ == "__main__":
     # calculate_w2_disc_uni_stand_normal from utils can be used for the Expectation but setting bounds
     # li,ui to -inf and inf instead for WHOLE SPACE
     # not sure how to get the expectation with unbounded region
-    mean = norm.mean  # [dim]
-    std = norm.stddev  # [dim]
-
-    # y = [torch.tensor(2.0).unsqueeze(0), torch.tensor(2.0).unsqueeze(0)]
-    # z = mean
-    z = torch.tensor([2.0, 2.0])
-    print(f'mean: {mean}')
-    w2 = w2_multi_norm_dist(norm=dd.MultivariateNormal(loc=locs, covariance_matrix=covariance_matrix * (1 / (np.sqrt(num_dims)))), signature_locs=z)
+    # z = torch.tensor([2.0, 2.0])
+    z = mean  # most optimal
+    w2 = w2_multi_norm_dist_for_set_locations(norm=norm, signature_locs=z)
 
     # Test to check above ^ optimal w2-signature with 1 loc has equal w2 error for z=mean
-    disc = dd.discretization_generator(norm, num_locs=1)
-    print(f'W2 error optimal location for 1 point: {disc.w2}')
-    print(disc.locs)
+    # disc = dd.discretization_generator(norm, num_locs=1)
+    # print(f'W2 error optimal location for 1 point: {disc.w2}')
+    # print(disc.locs)
 
     # term 2: integral over just boundary box of shell R1 - use 'grid_discretize_multi_norm_dist'
     # for one location, z and one region
@@ -116,17 +106,20 @@ if __name__ == "__main__":
     # arbitrary z location
     R1_lower_vertices_per_dim, R1_upper_vertices_per_dim = (R1_outer.lower_vertices_per_dim,
                                                             R1_outer.upper_vertices_per_dim)
-    disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(norm, R1_outer)
-    disc_R1_outer_locs = disc_R1_outer.locs
-    disc_R1_outer_probs = disc_R1_outer.probs.detach().numpy()  # mass in grid partitions
-    print(f'Prob mass of z: {disc_R1_outer_probs.sum()}')
-    print(f'Location z: {disc_R1_outer_locs}')
+    disc_R1_outer_locs, disc_R1_outer_probs, w2_disc_R1_outer = dd.discretize_multi_norm_dist(norm, num_locs=None,
+                                                                                              grid=R1_outer)
+    disc_R1_outer_probs = disc_R1_outer_probs.detach().numpy()  # mass in grid partitions
+    # print(f'Prob mass of z: {disc_R1_outer_probs.sum()}')
+    # print(f'Location z: {disc_R1_outer_locs}')
 
     # W2 calc
-    print(f'W2 error for inner R1(k) locations: {disc_R1.w2.item()}')
-    print(f'W2 error whole space to z: {w2}')
-    print(f'W2 error for all inside mass of R1 to location z: {disc_R1_outer.w2.item()}')
-    print(f"Total W2: R1(k) + (expectation - R1) = {disc_R1.w2.item() + (w2-disc_R1_outer.w2.item())}")
+    print(f'W2 error R1(k): {w2_disc_R1.item()}')
+    print(f'W2 error R^n with z: {w2}')
+    print(f'W2 error R1 with z: {w2_disc_R1_outer.item()}')
+    print(f"Total W2: R1(k) + (R^n with z - R1 with z) = {w2_disc_R1.item() + (w2-w2_disc_R1_outer.item())}")
+    print(f'Prob mass inside R1: {disc_R1_probs.sum()}')  # also same for disc_R1_outer_probs.sum()
+    print(f'Prob mass outside R1, mass of z: 1-R1 = {1-disc_R1_probs.sum()}')
+    # Scale prob mass correctly - assuming we do not have signature locations - how?
 
     global_min = min(disc_R1_outer_probs.min(), disc_probs.min())
     global_max = max(disc_R1_outer_probs.max(), disc_probs.max())
@@ -170,12 +163,12 @@ if __name__ == "__main__":
 
     plt.figure()
     ax = plt.gca()
-    ax.scatter(disc_locs.detach().numpy()[:, 0], disc_locs.detach().numpy()[:, 1], s=s1, color='red', label='Total',
+    ax.scatter(disc_locs.detach().numpy()[:, 0], disc_locs.detach().numpy()[:, 1], s=s1, color='red', label='W2-optimal signature locations',
                alpha=0.6)
     ax.scatter(disc_R1_outer_locs.detach().numpy()[:, 0], disc_R1_outer_locs.detach().numpy()[:, 1],
                s=s3, color='blue', label='z',
                alpha=0.6)
-    ax.scatter(disc_R1_locs.detach().numpy()[:, 0], disc_R1_locs.detach().numpy()[:, 1], s=s2, color='orange', label='R1', alpha=0.6)
+    ax.scatter(disc_R1_locs.detach().numpy()[:, 0], disc_R1_locs.detach().numpy()[:, 1], s=s2, color='orange', label='locations inside R1', alpha=0.6)
     for i in range(len(core_lower_vertices_per_dim[0])):
         for j in range(len(core_lower_vertices_per_dim[1])):
             x0 = core_lower_vertices_per_dim[0][i].item()
@@ -207,9 +200,62 @@ if __name__ == "__main__":
         linestyle='-'
     )
     ax.add_patch(rect)
-    ax.set_title('Shelling R1 inner and outer')
+    ax.set_title('Comparison of W2-optimal signature with shell')
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.legend()
     ax.grid(True)
+    plt.show()
+
+    # for gmm!
+    num_mix_elems0 = 2
+
+    locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
+    # only diagonal and pos def covariance matrices
+    covariance_diag = torch.exp(torch.randn(batch_size + (num_mix_elems0, num_dims,)))
+    covariance_matrix = torch.diag_embed(covariance_diag)
+
+    probs = torch.rand(batch_size + (num_mix_elems0,))
+    probs = probs / probs.sum(dim=-1, keepdim=True)
+
+    gmm = dd.MixtureMultivariateNormal(
+        mixture_distribution=torch.distributions.Categorical(probs=probs),
+        component_distribution=dd.MultivariateNormal(
+            loc=locs,
+            covariance_matrix=covariance_matrix * (1 / (np.sqrt(num_dims)))  # scaling
+        )
+    )
+
+    disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm)
+    locs = disc_gmm.locs.detach().numpy()
+    probs = disc_gmm.probs.detach().numpy()
+    s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
+    print(f"Total W2 error: {disc_gmm.w2.item()}")
+    cmap = plt.cm.get_cmap('tab10')
+
+    plt.figure(figsize=(8, 6))
+    ax = plt.gca()
+    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)
+    for idx, R1 in enumerate(disc_gmm.R1_grids):
+        core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+        core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+        color = cmap(idx % 10)
+        for i in range(len(core_lower_vertices_per_dim[0])):
+            for j in range(len(core_lower_vertices_per_dim[1])):
+                x0 = core_lower_vertices_per_dim[0][i].item()
+                x1 = core_upper_vertices_per_dim[0][i].item()
+                y0 = core_lower_vertices_per_dim[1][j].item()
+                y1 = core_upper_vertices_per_dim[1][j].item()
+
+                rect = patches.Rectangle(
+                    (x0, y0),
+                    x1 - x0,
+                    y1 - y0,
+                    edgecolor=color,
+                    facecolor='none',
+                    linewidth=1.5,
+                    linestyle='-'
+                )
+                ax.add_patch(rect)
+    plt.legend()
     plt.show()
