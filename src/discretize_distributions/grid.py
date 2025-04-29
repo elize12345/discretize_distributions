@@ -32,10 +32,10 @@ class Grid:
         self.lower_vertices_per_dim, self.upper_vertices_per_dim = self._compute_voronoi_edges(bounds)
 
     @staticmethod
-    def from_shape(shape, interval_per_dim: torch.Tensor):
+    def from_shape(shape, interval_per_dim: torch.Tensor, bounds: [] = None):
         assert len(shape) == len(interval_per_dim), "Shape and interval dimensions do not match."
         locs_per_dim = [torch.linspace(*interval_per_dim[dim], shape[dim]) for dim in range(len(shape))]
-        return Grid(locs_per_dim)
+        return Grid(locs_per_dim, bounds=bounds)
 
     def meshgrid(self, indexing='ij'):
         """Returns meshgrid view (not flattened)."""
@@ -139,7 +139,9 @@ class Grid:
         # then we create a new grid from just the core points
         core_grid = Grid.from_points(core_tensor, bounds=shell) if core_tensor.numel() > 0 else None
 
-        outer_grids, bounds = self.split_outer_grids(outer_tensor, shell)
+        # outer_grids, bounds = self.split_outer_grids(outer_tensor, shell)
+        outer_grids = []
+        bounds = []
 
         return shell_tensor, core_tensor, outer_tensor, core_grid, outer_grids, bounds
 

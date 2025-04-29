@@ -111,11 +111,9 @@ if __name__ == "__main__":
     s_grid2 = (probs_grid - global_min) / (global_max - global_min) * 100
     s_gmm2 = (probs_gmm - global_min) / (global_max - global_min) * 100
 
-    # Get axis limits
     x_min, x_max = locs_gmm[:, 0].min().item(), locs_gmm[:, 0].max().item()
     y_min, y_max = locs_gmm[:, 1].min().item(), locs_gmm[:, 1].max().item()
 
-    # Optional padding
     padding = 0.1
     x_range = x_max - x_min
     y_range = y_max - y_min
@@ -124,7 +122,6 @@ if __name__ == "__main__":
     y_min -= y_range * padding
     y_max += y_range * padding
 
-    # Compute bounding box for locs_grid
     x_grid_min, x_grid_max = locs_grid[:, 0].min(), locs_grid[:, 0].max()
     y_grid_min, y_grid_max = locs_grid[:, 1].min(), locs_grid[:, 1].max()
     width = x_grid_max - x_grid_min
@@ -140,16 +137,13 @@ if __name__ == "__main__":
     # plt.savefig(f"figures/only_w2_optimal_locations_{user_choice}_{user_choice2}.svg")
     plt.show()
 
+# Plot 2
     plt.figure()
     plt.scatter(locs_grid[:, 0], locs_grid[:, 1], s=1, label="Possible grid locations", color='black')
     plt.scatter(locs_grid[:, 0], locs_grid[:, 1], s=s_grid, label="Weighted grid locations", color='red', alpha=0.6)
-
-    # Add bounding box
     rect = patches.Rectangle((x_grid_min, y_grid_min), width, height, linewidth=1, edgecolor='black',
                              facecolor='none', label='Grid bounding box')
     plt.gca().add_patch(rect)
-
-    # Set consistent axis limits
     plt.xlim(x_min, x_max)
     plt.ylim(y_min, y_max)
 
@@ -163,13 +157,10 @@ if __name__ == "__main__":
     plt.scatter(locs_grid[:, 0], locs_grid[:, 1], s=1, label="Possible grid locations", color='black')
     plt.scatter(locs_grid[:, 0], locs_grid[:, 1], s=s_grid2, label="Weighted grid locations", color='red', alpha=0.6)
     plt.scatter(locs_gmm[:, 0], locs_gmm[:, 1], s=s_gmm2, label="Optimal-W2 locations", color='blue', alpha=0.6)
-
-    # Add bounding box
     rect = patches.Rectangle((x_grid_min, y_grid_min), width, height, linewidth=1, edgecolor='black',
                              facecolor='none', label='Grid bounding box')
     plt.gca().add_patch(rect)
 
-    # Set consistent axis limits
     plt.xlim(x_min, x_max)
     plt.ylim(y_min, y_max)
 
