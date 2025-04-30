@@ -238,15 +238,17 @@ class DiscretizedMixtureMultivariateNormalQuantizationShell(Discretization):
                 # calc w2 for R1(k)
                 _, probs_R1, w2_R1 = discretize_multi_norm_dist(component_p, None, self.R1_grid)
 
-                # calc w2 for R^n with z
-                w2_Rn = w2_multi_norm_dist_for_set_locations(norm=component_p, signature_locs=z)
-
-                # calc w2 for R1 with z
-                R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell)
+                # calc w2 for R^n with z - should just be same as R1_inner with unbounded region
+                # w2_Rn = w2_multi_norm_dist_for_set_locations(norm=component_p, signature_locs=z)
+                R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
                 _, _, w2_R1_outer = discretize_multi_norm_dist(component_p, None, R1_outer)
 
+                # calc w2 for R1 with z
+                R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell)
+                _, _, w2_R1_inner = discretize_multi_norm_dist(component_p, None, R1_inner)
+
                 # total w2 per component
-                w2_p = w2_R1 + w2_Rn + w2_R1_outer
+                w2_p = w2_R1 + (w2_R1_outer - w2_R1_inner)
 
                 # weighted w2 for gmm
                 pi = probs_mix[p]
@@ -293,15 +295,17 @@ class DiscretizedMixtureMultivariateNormalQuantizationShell(Discretization):
                 # calc w2 for R1(k)
                 _, probs_R1, w2_R1 = discretize_multi_norm_dist(component_p, None, R1)
 
-                # calc w2 for R^n with z
-                w2_Rn = w2_multi_norm_dist_for_set_locations(norm=component_p, signature_locs=z)
-
-                # calc w2 for R1 with z
-                R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
+                # calc w2 for R^n with z - should just be same as R1_inner with unbounded region!
+                # w2_Rn = w2_multi_norm_dist_for_set_locations(norm=component_p, signature_locs=z)
+                R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
                 _, _, w2_R1_outer = discretize_multi_norm_dist(component_p, None, R1_outer)
 
+                # calc w2 for R1 with z
+                R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell)
+                _, _, w2_R1_inner = discretize_multi_norm_dist(component_p, None, R1_inner)
+
                 # total w2 per component
-                w2_p = w2_R1 + w2_Rn + w2_R1_outer
+                w2_p = w2_R1 + (w2_R1_outer - w2_R1_inner)
 
                 # weighted w2 for whole gmm
                 pi = probs_mix[p]
