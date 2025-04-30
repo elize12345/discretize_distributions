@@ -226,36 +226,71 @@ if __name__ == "__main__":
         )
     )
 
-    disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm)
+    # each separate grids
+    # disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm)
+
+    # same grid for all components
+    shell_input = [(torch.tensor(-2.5), torch.tensor(0.0)), (torch.tensor(-0.8), torch.tensor(1.5))]
+    disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm, shell=shell_input, shared_shell=True)
+    # disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm, shell_input)
+
+    # stats
     locs = disc_gmm.locs.detach().numpy()
     probs = disc_gmm.probs.detach().numpy()
     s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
     print(f"Total W2 error: {disc_gmm.w2.item()}")
     cmap = plt.cm.get_cmap('tab10')
 
+    # multiple shells
+    # plt.figure(figsize=(8, 6))
+    # ax = plt.gca()
+    # ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)
+    # for idx, R1 in enumerate(disc_gmm.R1_grids):
+    #     core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+    #     core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+    #     color = cmap(idx % 10)
+    #     for i in range(len(core_lower_vertices_per_dim[0])):
+    #         for j in range(len(core_lower_vertices_per_dim[1])):
+    #             x0 = core_lower_vertices_per_dim[0][i].item()
+    #             x1 = core_upper_vertices_per_dim[0][i].item()
+    #             y0 = core_lower_vertices_per_dim[1][j].item()
+    #             y1 = core_upper_vertices_per_dim[1][j].item()
+    #
+    #             rect = patches.Rectangle(
+    #                 (x0, y0),
+    #                 x1 - x0,
+    #                 y1 - y0,
+    #                 edgecolor=color,
+    #                 facecolor='none',
+    #                 linewidth=1.5,
+    #                 linestyle='-'
+    #             )
+    #             ax.add_patch(rect)
+    # plt.legend()
+    # plt.show()
+
+    # same shell
+    R1 = disc_gmm.R1_grid
     plt.figure(figsize=(8, 6))
     ax = plt.gca()
     ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)
-    for idx, R1 in enumerate(disc_gmm.R1_grids):
-        core_lower_vertices_per_dim = R1.lower_vertices_per_dim
-        core_upper_vertices_per_dim = R1.upper_vertices_per_dim
-        color = cmap(idx % 10)
-        for i in range(len(core_lower_vertices_per_dim[0])):
-            for j in range(len(core_lower_vertices_per_dim[1])):
-                x0 = core_lower_vertices_per_dim[0][i].item()
-                x1 = core_upper_vertices_per_dim[0][i].item()
-                y0 = core_lower_vertices_per_dim[1][j].item()
-                y1 = core_upper_vertices_per_dim[1][j].item()
-
-                rect = patches.Rectangle(
-                    (x0, y0),
-                    x1 - x0,
-                    y1 - y0,
-                    edgecolor=color,
-                    facecolor='none',
-                    linewidth=1.5,
-                    linestyle='-'
-                )
-                ax.add_patch(rect)
+    core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+    core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+    for i in range(len(core_lower_vertices_per_dim[0])):
+        for j in range(len(core_lower_vertices_per_dim[1])):
+            x0 = core_lower_vertices_per_dim[0][i].item()
+            x1 = core_upper_vertices_per_dim[0][i].item()
+            y0 = core_lower_vertices_per_dim[1][j].item()
+            y1 = core_upper_vertices_per_dim[1][j].item()
+            rect = patches.Rectangle(
+                (x0, y0),
+                x1 - x0,
+                y1 - y0,
+                edgecolor='blue',
+                facecolor='none',
+                linewidth=1.5,
+                linestyle='-'
+            )
+            ax.add_patch(rect)
     plt.legend()
     plt.show()
