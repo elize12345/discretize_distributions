@@ -98,6 +98,7 @@ if __name__ == "__main__":
 
     q = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=grid)
     w2 = q.w2
+    print(f'z mass for unbounded region: {q.z_probs}')  # should be zero!
     probs_grid = q.probs.detach().numpy()
     locs_grid = q.locs.detach().numpy()
     print(f'W2 error for Quantization: {w2.item()}')

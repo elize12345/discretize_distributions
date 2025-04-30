@@ -66,6 +66,7 @@ class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
         locs_p = gmm.component_distribution.loc
         cov_p = gmm.component_distribution.covariance_matrix
         w2 = torch.zeros(1)
+        z_probs = torch.zeros(1)  # shape of dim
 
         for p in range(len(probs_mix)):
             component_p = MultivariateNormal(
@@ -74,6 +75,11 @@ class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
             )
             _, probs_p, w2_p = discretize_multi_norm_dist(component_p, None, grid)
             pi = probs_mix[p]
+
+            # left over mass for bounded grids - so mass outside grid
+            z_mass = 1.0 - probs_p.sum()  # so this should be 0 when grid is unbounded
+            z_probs += z_mass * pi  # weighted per component
+
             probs += probs_p * pi  # do need it as grid probs are dependent on component mean and std
             # for standardization
             w2 += w2_p.pow(2) * pi
@@ -86,127 +92,8 @@ class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
         # # w2_p shape [num_components, num_locs]
         # probs = torch.einsum('m,mn->n', probs_mix, probs_p)  # [num_locs]
         # w2 = torch.einsum('m,mn->n', probs_mix, w2_p)  # [num_locs]
-
+        self.z_probs = z_probs
         super().__init__(gmm, probs, locs, w2.sqrt())
-
-# class DiscretizedMixtureMultivariateNormalQuantizationShell(Discretization):
-#     def __init__(self, gmm: MixtureMultivariateNormal, shape=(10, 10), **kwargs):
-#         assert isinstance(gmm, MixtureMultivariateNormal), 'distribution not of type MixtureMultivariateNormal'
-#
-#         probs_mix = gmm.mixture_distribution.probs
-#
-#         locs_p = gmm.component_distribution.loc
-#         cov_p = gmm.component_distribution.covariance_matrix
-#         stddev_p = gmm.component_distribution.stddev
-#
-#         w2 = torch.zeros(1)
-#         locs_all = []
-#         probs_all = []
-#         self.R1_grids = []
-#
-#         for p in range(len(probs_mix)):
-#             component_p = MultivariateNormal(
-#                 loc=locs_p[p],
-#                 covariance_matrix=cov_p[p]
-#             )
-#             z = locs_p[p]
-#             std = stddev_p[p]
-#             shell_input = [(z[0] - 2*std[0], z[0] + 2*std[0]), (z[1] - 2*std[1], z[1] + 2*std[1])]
-#
-#             # calc w2 for R1(k)
-#             R1 = Grid.shell(shell_input, shape)
-#             self.R1_grids.append(R1)
-#             locs_R1, probs_R1, w2_R1 = discretize_multi_norm_dist(component_p, None, R1)
-#
-#             # calc w2 for R^n with z
-#             w2_Rn = w2_multi_norm_dist_for_set_locations(norm=component_p, signature_locs=z)
-#
-#             # calc w2 for R1 with z
-#             R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
-#             _, _, w2_R1_outer = discretize_multi_norm_dist(component_p, None, R1_outer)
-#
-#             w2_p = w2_R1 + w2_Rn + w2_R1_outer
-#
-#             pi = probs_mix[p]
-#             w2 += w2_p.pow(2) * pi
-#
-#             z_mass = 1.0 - probs_R1.sum()  # mass outside R1, assigned to z
-#             print(f'prob R1 sum: {probs_R1.sum()}')
-#             print(f'prob R1-1: {z_mass}, at location: {z}')
-#             print(f'w2 error for component {p}: {w2_p}')
-#             locs_grid_p = torch.cat([locs_R1, z.unsqueeze(0)], dim=0)  # add z as extra point
-#             probs_grid_p = torch.cat([probs_R1, z_mass.unsqueeze(0)], dim=0)
-#
-#             # scale prob mass with weight of component
-#             pi = probs_mix[p]
-#             probs_grid_p = probs_grid_p * pi
-#
-#             locs_all.append(locs_grid_p)
-#             probs_all.append(probs_grid_p)
-#
-#         locs = torch.cat(locs_all, dim=0)  # [total_num_points, dim]
-#         probs = torch.cat(probs_all, dim=0)  # [total_num_points]
-#
-#         super().__init__(gmm, probs, locs, w2.sqrt())
-
-# class DiscretizedMixtureMultivariateNormalQuantizationShell(Discretization):
-#     def __init__(self, gmm: MixtureMultivariateNormal, shell: [], shape=(10, 10), **kwargs):
-#         assert isinstance(gmm, MixtureMultivariateNormal), 'distribution not of type MixtureMultivariateNormal'
-#
-#         probs_mix = gmm.mixture_distribution.probs
-#
-#         locs_p = gmm.component_distribution.loc
-#         cov_p = gmm.component_distribution.covariance_matrix
-#
-#         w2 = torch.zeros(1)
-#         z_locs = []
-#         z_probs = []
-#
-#         self.R1_grid = Grid.shell(shell, shape)
-#         locs_R1 = self.R1_grid.get_locs()
-#         probs = torch.zeros(locs_R1.shape[0])  # [num_locs,]
-#
-#         for p in range(len(probs_mix)):
-#             component_p = MultivariateNormal(
-#                 loc=locs_p[p],
-#                 covariance_matrix=cov_p[p]
-#             )
-#             z = locs_p[p]
-#
-#             # calc w2 for R1(k)
-#             _, probs_R1, w2_R1 = discretize_multi_norm_dist(component_p, None, self.R1_grid)
-#
-#             # calc w2 for R^n with z
-#             w2_Rn = w2_multi_norm_dist_for_set_locations(norm=component_p, signature_locs=z)
-#
-#             # calc w2 for R1 with z
-#             R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell)
-#             _, _, w2_R1_outer = discretize_multi_norm_dist(component_p, None, R1_outer)
-#
-#             w2_p = w2_R1 + w2_Rn + w2_R1_outer
-#
-#             pi = probs_mix[p]
-#             w2 += w2_p.pow(2) * pi
-#
-#             z_mass = 1.0 - probs_R1.sum()  # mass outside R1, assigned to z
-#             print(f'prob R1 sum: {probs_R1.sum()}')
-#             print(f'prob R1-1: {z_mass}, at location: {z}')
-#             print(f'w2 error for component {p}: {w2_p}')
-#
-#             probs += probs_R1 * pi  # probs from grids
-#
-#             # z locations and prob mass
-#             z_probs.append(z_mass * pi)
-#             z_locs.append(z)
-#
-#         z_locs = torch.stack(z_locs, dim=0)
-#         z_probs = torch.tensor(z_probs)
-#
-#         locs = torch.cat([locs_R1, z_locs], dim=0)
-#         probs = torch.cat([probs, z_probs], dim=0)
-#
-#         super().__init__(gmm, probs, locs, w2.sqrt())
-
 
 class DiscretizedMixtureMultivariateNormalQuantizationShell(Discretization):
     def __init__(self, gmm: MixtureMultivariateNormal, shape: Tuple[int, int] = (10, 10),
@@ -266,6 +153,7 @@ class DiscretizedMixtureMultivariateNormalQuantizationShell(Discretization):
 
             z_locs = torch.stack(z_locs, dim=0)
             z_probs = torch.tensor(z_probs)
+            print(f'z mass total: {z_probs.sum()}')
 
             locs = torch.cat([locs_R1, z_locs], dim=0)
             probs = torch.cat([probs_accum, z_probs], dim=0)

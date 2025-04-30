@@ -270,33 +270,32 @@ if __name__ == "__main__":
     # plt.show()
 
     # same shell
-    # R1 = disc_gmm.R1_grid
-    # plt.figure(figsize=(8, 6))
-    # ax = plt.gca()
-    # ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)
-    # core_lower_vertices_per_dim = R1.lower_vertices_per_dim
-    # core_upper_vertices_per_dim = R1.upper_vertices_per_dim
-    # for i in range(len(core_lower_vertices_per_dim[0])):
-    #     for j in range(len(core_lower_vertices_per_dim[1])):
-    #         x0 = core_lower_vertices_per_dim[0][i].item()
-    #         x1 = core_upper_vertices_per_dim[0][i].item()
-    #         y0 = core_lower_vertices_per_dim[1][j].item()
-    #         y1 = core_upper_vertices_per_dim[1][j].item()
-    #         rect = patches.Rectangle(
-    #             (x0, y0),
-    #             x1 - x0,
-    #             y1 - y0,
-    #             edgecolor='blue',
-    #             facecolor='none',
-    #             linewidth=1.5,
-    #             linestyle='-'
-    #         )
-    #         ax.add_patch(rect)
-    # plt.legend()
-    # plt.show()
+    R1 = disc_gmm.R1_grid
+    plt.figure(figsize=(8, 6))
+    ax = plt.gca()
+    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)
+    core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+    core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+    for i in range(len(core_lower_vertices_per_dim[0])):
+        for j in range(len(core_lower_vertices_per_dim[1])):
+            x0 = core_lower_vertices_per_dim[0][i].item()
+            x1 = core_upper_vertices_per_dim[0][i].item()
+            y0 = core_lower_vertices_per_dim[1][j].item()
+            y1 = core_upper_vertices_per_dim[1][j].item()
+            rect = patches.Rectangle(
+                (x0, y0),
+                x1 - x0,
+                y1 - y0,
+                edgecolor='blue',
+                facecolor='none',
+                linewidth=1.5,
+                linestyle='-'
+            )
+            ax.add_patch(rect)
+    plt.legend()
+    plt.show()
 
-    shell_input = [(torch.tensor(-2.5), torch.tensor(0.0)), (torch.tensor(-0.8), torch.tensor(1.5))]
-
+    # applying to whole GMM instead component wise
     locs_p = gmm.component_distribution.loc  # [num_components, dim]
 
     w2 = torch.zeros(1)
@@ -305,30 +304,60 @@ if __name__ == "__main__":
     locs_R1 = R1_grid.get_locs()
 
     # component
-    z = locs_p[1]  # can be any arbitrary location
+    # z = locs_p[0, :]  # can be any arbitrary location
+    z = torch.tensor([2.0, 2.0])  # how does this not change W2 error??
 
     # calc w2 for R1(k)
-    _, probs_R1, w2_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
+    disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
+    probs_R1, w2_R1, z_probs_R1 = disc_R1.probs, disc_R1.w2.item(), disc_R1.z_probs   # probs already weighted by components to add to 1 ...
 
     # calc w2 for R^n with z - should just be same as R1_inner with unbounded region
     # w2_Rn = w2_multi_norm_dist_for_set_locations(norm=component_p, signature_locs=z)
     R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
-    _, _, w2_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
+    disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
+    w2_R1_outer = disc_R1_outer.w2.item()
 
     # calc w2 for R1 with z
     R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
-    _, _, w2_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
+    disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
+    w2_R1_inner = disc_R1_inner.w2.item()
 
     # total w2 per component
     w2_p = w2_R1 + (w2_R1_outer - w2_R1_inner)
 
+    # Next time - W2 outer and inner are equal as their edges are equal in calculate_w2_disc_uni_stand_normal, so need to
+    #  change that to vertices of the grid!
+
     # z location and mass
-    z_mass = 1.0 - probs_R1.sum()
-
     print(f'prob R1 sum: {probs_R1.sum()}')
-    print(f'prob R1-1: {z_mass}, at location: {z}')
+    print(f'prob mass of z: R1-1 = {z_probs_R1}, at location: {z}')
 
-    locs_ = torch.cat([locs_R1, z], dim=0)
-    probs_ = torch.cat([probs_R1, z_mass], dim=0)
+    locs_ = torch.cat([locs_R1, z.unsqueeze(0)], dim=0)
+    probs_ = torch.cat([probs_R1, z_probs_R1], dim=0)
 
-    print(f'w2_p: {w2_p}')
+    print(f'W2 error for whole GMM: {w2_p}')
+    s = (probs_ - probs_.min()) / (probs_.max() - probs_.min()) * 100
+
+    plt.figure(figsize=(8, 6))
+    ax = plt.gca()
+    ax.scatter(locs_[:, 0], locs_[:, 1], label='Locs', s=s, color='red', alpha=0.6)
+    core_lower_vertices_per_dim = R1_grid.lower_vertices_per_dim
+    core_upper_vertices_per_dim = R1_grid.upper_vertices_per_dim
+    for i in range(len(core_lower_vertices_per_dim[0])):
+        for j in range(len(core_lower_vertices_per_dim[1])):
+            x0 = core_lower_vertices_per_dim[0][i].item()
+            x1 = core_upper_vertices_per_dim[0][i].item()
+            y0 = core_lower_vertices_per_dim[1][j].item()
+            y1 = core_upper_vertices_per_dim[1][j].item()
+            rect = patches.Rectangle(
+                (x0, y0),
+                x1 - x0,
+                y1 - y0,
+                edgecolor='blue',
+                facecolor='none',
+                linewidth=1.5,
+                linestyle='-'
+            )
+            ax.add_patch(rect)
+    plt.legend()
+    plt.show()
