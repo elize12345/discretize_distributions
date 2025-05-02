@@ -67,7 +67,21 @@ def grid_discretize_multi_norm_dist(
     scaled_locs_per_dim = [
         (grid.locs_per_dim[dim] - mean[dim]) / std[dim]
         for dim in range(grid.dim)]
-    w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
+    scaled_lower_vertices_per_dim = [
+        (lower - mean[dim]) / std[dim]
+        for dim, lower in enumerate(grid.lower_vertices_per_dim)]
+
+    scaled_upper_vertices_per_dim = [
+        (upper - mean[dim]) / std[dim]
+        for dim, upper in enumerate(grid.upper_vertices_per_dim)]
+
+    w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(
+            dim_locs,
+            lower=scaled_lower_vertices_per_dim[dim],
+            upper=scaled_upper_vertices_per_dim[dim]
+        )
+        for dim, dim_locs in enumerate(scaled_locs_per_dim)]
+    # w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
     w2 = torch.stack(w2_per_dim).pow(2).sum().sqrt()
 
     return locs, probs, w2

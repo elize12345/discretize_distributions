@@ -10,13 +10,6 @@ from discretize_distributions.distributions import DiscretizedMixtureMultivariat
 import GMMWas
 import numpy as np
 
-
-def generate_covariance_matrix(eigenvalues, eigenvectors, scale=1.0):
-    # cov = V*lambda*VT
-    cov_matrix = eigenvectors @ torch.diag(eigenvalues) @ eigenvectors.T
-    return cov_matrix * scale
-
-
 if __name__ == "__main__":
 
     num_dims = 2
@@ -24,7 +17,7 @@ if __name__ == "__main__":
     batch_size = torch.Size()
     torch.manual_seed(0)
 
-    user_choice = 'spread'
+    user_choice = 'overlap'
     # input(
     #     "Choose GMM mode: type 'spread' for spread apart or 'overlap' for overlapping components: ").strip().lower()
     if user_choice == 'spread':
@@ -88,7 +81,7 @@ if __name__ == "__main__":
     grid_list = [torch.sort(torch.unique(locs_avg[:, i]))[0] for i in range(locs_avg.shape[1])]
     grid_avg = Grid(locs_per_dim=grid_list)
 
-    user_choice2 = 'grid_union'
+    user_choice2 = 'grid_average'
     if user_choice2 == 'grid_average':
         grid = grid_avg
     elif user_choice2 == 'grid_union':
@@ -150,7 +143,7 @@ if __name__ == "__main__":
 
     plt.legend()
     # plt.title("Unified grid with bounding box")
-    plt.savefig(f"figures/Test2/only_grid_locations_{user_choice}_{user_choice2}.svg")
+    # plt.savefig(f"figures/Test2/only_grid_locations_{user_choice}_{user_choice2}.svg")
     plt.show()
 
     # Plot 3
@@ -167,6 +160,6 @@ if __name__ == "__main__":
 
     plt.legend()
     # plt.title("Comparison with bounding box")
-    plt.savefig(f"figures/Test2/all_locations_{user_choice}_{user_choice2}.svg")
+    # plt.savefig(f"figures/Test2/all_locations_{user_choice}_{user_choice2}.svg")
     plt.show()
 

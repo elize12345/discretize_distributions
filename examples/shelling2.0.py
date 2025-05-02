@@ -208,7 +208,7 @@ if __name__ == "__main__":
     plt.show()
 
     # for gmm!
-    num_mix_elems0 = 2
+    num_mix_elems0 = 3
 
     locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
     # only diagonal and pos def covariance matrices
@@ -227,12 +227,7 @@ if __name__ == "__main__":
     )
 
     # each separate grids
-    # disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm)
-
-    # same grid for all components
-    shell_input = [(torch.tensor(-2.5), torch.tensor(0.0)), (torch.tensor(-0.8), torch.tensor(1.5))]
-    disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm, shell=shell_input, shared_shell=True)
-    # disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm, shell_input)
+    disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm)
 
     # stats
     locs = disc_gmm.locs.detach().numpy()
@@ -242,32 +237,42 @@ if __name__ == "__main__":
     cmap = plt.cm.get_cmap('tab10')
 
     # multiple shells
-    # plt.figure(figsize=(8, 6))
-    # ax = plt.gca()
-    # ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)
-    # for idx, R1 in enumerate(disc_gmm.R1_grids):
-    #     core_lower_vertices_per_dim = R1.lower_vertices_per_dim
-    #     core_upper_vertices_per_dim = R1.upper_vertices_per_dim
-    #     color = cmap(idx % 10)
-    #     for i in range(len(core_lower_vertices_per_dim[0])):
-    #         for j in range(len(core_lower_vertices_per_dim[1])):
-    #             x0 = core_lower_vertices_per_dim[0][i].item()
-    #             x1 = core_upper_vertices_per_dim[0][i].item()
-    #             y0 = core_lower_vertices_per_dim[1][j].item()
-    #             y1 = core_upper_vertices_per_dim[1][j].item()
-    #
-    #             rect = patches.Rectangle(
-    #                 (x0, y0),
-    #                 x1 - x0,
-    #                 y1 - y0,
-    #                 edgecolor=color,
-    #                 facecolor='none',
-    #                 linewidth=1.5,
-    #                 linestyle='-'
-    #             )
-    #             ax.add_patch(rect)
-    # plt.legend()
-    # plt.show()
+    plt.figure(figsize=(8, 6))
+    ax = plt.gca()
+    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)
+    for idx, R1 in enumerate(disc_gmm.R1_grids):
+        core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+        core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+        color = cmap(idx % 10)
+        for i in range(len(core_lower_vertices_per_dim[0])):
+            for j in range(len(core_lower_vertices_per_dim[1])):
+                x0 = core_lower_vertices_per_dim[0][i].item()
+                x1 = core_upper_vertices_per_dim[0][i].item()
+                y0 = core_lower_vertices_per_dim[1][j].item()
+                y1 = core_upper_vertices_per_dim[1][j].item()
+
+                rect = patches.Rectangle(
+                    (x0, y0),
+                    x1 - x0,
+                    y1 - y0,
+                    edgecolor=color,
+                    facecolor='none',
+                    linewidth=1.5,
+                    linestyle='-'
+                )
+                ax.add_patch(rect)
+    plt.legend()
+    plt.show()
+
+    # same grid for all components
+    shell_input = [(torch.tensor(-2.5), torch.tensor(0.0)), (torch.tensor(-0.8), torch.tensor(1.5))]
+    disc_gmm = DiscretizedMixtureMultivariateNormalQuantizationShell(gmm, shell=shell_input, shared_shell=True)
+
+    # stats
+    locs = disc_gmm.locs.detach().numpy()
+    probs = disc_gmm.probs.detach().numpy()
+    s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
+    print(f"Total W2 error: {disc_gmm.w2.item()}")
 
     # same shell
     R1 = disc_gmm.R1_grid
@@ -297,6 +302,7 @@ if __name__ == "__main__":
 
     # applying to whole GMM instead component wise
     locs_p = gmm.component_distribution.loc  # [num_components, dim]
+    shell_input = [(torch.tensor(-2.5), torch.tensor(0.0)), (torch.tensor(-0.8), torch.tensor(1.5))]
 
     w2 = torch.zeros(1)
 
@@ -304,38 +310,40 @@ if __name__ == "__main__":
     locs_R1 = R1_grid.get_locs()
 
     # component
-    # z = locs_p[0, :]  # can be any arbitrary location
-    z = torch.tensor([2.0, 2.0])  # how does this not change W2 error??
+    z = locs_p[2, :]  # can be any arbitrary location
+    # z = torch.tensor([2.0, 2.0])  # how does this not change W2 error??
 
     # calc w2 for R1(k)
     disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
     probs_R1, w2_R1, z_probs_R1 = disc_R1.probs, disc_R1.w2.item(), disc_R1.z_probs   # probs already weighted by components to add to 1 ...
+    print(f"W2 inside R1 grid: {w2_R1}")
 
     # calc w2 for R^n with z - should just be same as R1_inner with unbounded region
     # w2_Rn = w2_multi_norm_dist_for_set_locations(norm=component_p, signature_locs=z)
     R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
     disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
     w2_R1_outer = disc_R1_outer.w2.item()
+    print(f'W2 R1 outer: {w2_R1_outer}')
 
     # calc w2 for R1 with z
     R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
     disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
     w2_R1_inner = disc_R1_inner.w2.item()
+    print(f'W2 R1 inner: {w2_R1_inner}')
 
     # total w2 per component
     w2_p = w2_R1 + (w2_R1_outer - w2_R1_inner)
-
-    # Next time - W2 outer and inner are equal as their edges are equal in calculate_w2_disc_uni_stand_normal, so need to
-    #  change that to vertices of the grid!
+    print(f'W2 error for whole GMM: {w2_p}')
 
     # z location and mass
     print(f'prob R1 sum: {probs_R1.sum()}')
     print(f'prob mass of z: R1-1 = {z_probs_R1}, at location: {z}')
 
     locs_ = torch.cat([locs_R1, z.unsqueeze(0)], dim=0)
-    probs_ = torch.cat([probs_R1, z_probs_R1], dim=0)
+    probs_ = torch.cat([probs_R1, z_probs_R1], dim=0)  # need to normalize ?
+    probs_ = probs_ / probs_.sum(dim=-1, keepdim=True)
+    print(f'Total probs: {probs_.sum()}')
 
-    print(f'W2 error for whole GMM: {w2_p}')
     s = (probs_ - probs_.min()) / (probs_.max() - probs_.min()) * 100
 
     plt.figure(figsize=(8, 6))
@@ -361,3 +369,5 @@ if __name__ == "__main__":
             ax.add_patch(rect)
     plt.legend()
     plt.show()
+
+    # next is using multiple shells on GMM
