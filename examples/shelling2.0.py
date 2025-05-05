@@ -370,4 +370,32 @@ if __name__ == "__main__":
     plt.legend()
     plt.show()
 
-    # next is using multiple shells on GMM
+    # test - if R1 is whole space
+    R1_grid = Grid.from_shape((10, 10), torch.Tensor(((-2.5, 0.0), (-0.8, 1.5))))  # no bounds on grid
+    locs_R1 = R1_grid.get_locs()
+
+    # component
+    z = locs_p[2, :]  # can be any arbitrary location
+    # z = torch.tensor([2.0, 2.0])  # how does this not change W2 error??
+
+    # calc w2 for R1(k)
+    disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
+    probs_R1, w2_R1, z_probs_R1 = disc_R1.probs, disc_R1.w2.item(), disc_R1.z_probs  # probs already weighted by components to add to 1 ...
+    print(f"W2 inside R1 grid: {w2_R1}")
+
+    # calc w2 for R^n with z - should just be same as R1_inner with unbounded region
+    # w2_Rn = w2_multi_norm_dist_for_set_locations(norm=component_p, signature_locs=z)
+    R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
+    disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
+    w2_R1_outer = disc_R1_outer.w2.item()
+    print(f'W2 R1 outer: {w2_R1_outer}')
+
+    # calc w2 for R1 with z
+    R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
+    disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
+    w2_R1_inner = disc_R1_inner.w2.item()
+    print(f'W2 R1 inner: {w2_R1_inner}')
+
+    # total w2 per component
+    w2_p = w2_R1 + (w2_R1_outer - w2_R1_inner)
+    print(f'W2 error for whole GMM: {w2_p}')
