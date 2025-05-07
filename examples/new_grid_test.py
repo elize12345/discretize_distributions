@@ -35,12 +35,12 @@ if __name__ == "__main__":
     else:
         raise ValueError("Invalid choice. Please type 'spread' or 'overlap'.")
 
-    # locs = torch.randn(batch_size + (num_mix_elems0, num_dims,))
+    # locs = torch.randn(batch_size + (num_mix_elems, num_dims,))
     # # only diagonal and pos def covariance matrices
-    # covariance_diag = torch.exp(torch.randn(batch_size + (num_mix_elems0, num_dims,)))
+    # covariance_diag = torch.exp(torch.randn(batch_size + (num_mix_elems, num_dims,)))
     # covariance_matrix = torch.diag_embed(covariance_diag)
     #
-    # probs = torch.rand(batch_size + (num_mix_elems0,))
+    # probs = torch.rand(batch_size + (num_mix_elems,))
     # probs = probs / probs.sum(dim=-1, keepdim=True)
     probs = torch.tensor([0.3, 0.7])
     # print(probs)

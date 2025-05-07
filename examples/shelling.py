@@ -18,7 +18,7 @@ if __name__ == "__main__":
     batch_size = torch.Size()
     torch.manual_seed(0)
 
-    # covariance_matrix = GMMWas.tensors.generate_pd_mat(batch_size + (num_mix_elems0, num_dims, num_dims))
+    # covariance_matrix = GMMWas.tensors.generate_pd_mat(batch_size + (num_mix_elems, num_dims, num_dims))
     # locs = torch.tensor([[1.0, 1.0]])
     # covariance_matrix = torch.tensor([[[0.2, 0.0000],
     #                                    [0.0000, 0.2]]])

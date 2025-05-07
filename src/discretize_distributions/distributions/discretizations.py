@@ -171,8 +171,8 @@ class DiscretizedMixtureMultivariateNormalQuantizationShell(Discretization):
 
                 # separate shell per component based on mean and std
                 shell_input = [
-                    (z[0] - 2 * std[0], z[0] + 2 * std[0]),
-                    (z[1] - 2 * std[1], z[1] + 2 * std[1])
+                    (z[0] - std[0], z[0] + std[0]),
+                    (z[1] - std[1], z[1] + std[1])
                 ]
 
                 # save seperate shells
