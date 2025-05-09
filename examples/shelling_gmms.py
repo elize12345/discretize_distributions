@@ -12,7 +12,7 @@ import numpy as np
 from scipy.spatial import KDTree
 import GMMWas
 
-def quantization_gmm_shells(gmm, shell_inputs, z, resolutions, paddings):
+def quantization_gmm_shells(gmm, shell_inputs, z, resolutions=None, paddings=None, grid_locs=None):
     """
     Compute the quantization of a GMM for NON-overlapping grids
     Args:
@@ -28,19 +28,22 @@ def quantization_gmm_shells(gmm, shell_inputs, z, resolutions, paddings):
 
     """
 
-    # locs_p = gmm.component_distribution.loc  # shape: [num_components, dim]
-    # z = locs_p[2, :]  # arbitrary component location
-
     w2_squared_sum = torch.zeros(1)
     all_locs = []
     all_probs = []
     all_R1_grids = []
     all_z_probs = torch.zeros(1)
 
-    for shell_input, shape, pad in zip(shell_inputs, resolutions, paddings):
-        R1_grid = Grid.shell(shell_input, shape, pad)
-        locs_R1 = R1_grid.get_locs()
+    for i, shell_input in enumerate(shell_inputs):
+        if grid_locs is not None:
+            grid_locs_per_shell = grid_locs[i]
+            R1_grid = Grid(locs_per_dim=grid_locs_per_shell, bounds=shell_input)  # w2-optimal-approx-gaussian
+        else:
+            shape = resolutions[i]
+            pad = paddings[i]
+            R1_grid = Grid.shell(shell_input, shape, pad)  # uniform
 
+        locs_R1 = R1_grid.get_locs()
         R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
         R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
 
@@ -86,60 +89,6 @@ def quantization_gmm_shells(gmm, shell_inputs, z, resolutions, paddings):
 
     return probs_all, locs_all, total_w2, all_R1_grids
 
-def total_variation_distance(gmm0, gmm1, num_samples):
-    """TV distance to compare overlap of random GMMs using empirical distributions"""
-    samples = gmm0.rsample((num_samples,))
-    p_x = torch.exp(gmm0.log_prob(samples))
-    q_x = torch.exp(gmm1.log_prob(samples))
-    # TV distance
-    tv_distance = 0.5 * torch.mean(torch.abs(p_x - q_x))
-    return tv_distance.item()
-
-def BC(loc1, cov1, loc2, cov2):
-    """
-    Bhattacharyya coefficient between two multivariate Gaussians.
-    """
-
-    # part one
-    cov_avg = 0.5 * (cov1 + cov2)
-    cov_avg_inv = torch.linalg.inv(cov_avg)
-    diff = loc2 - loc1
-    term1 = 0.125 * diff @ cov_avg_inv @ diff
-
-    # part two
-    det_cov1 = torch.linalg.det(cov1)
-    det_cov2 = torch.linalg.det(cov2)
-    det_avg = torch.linalg.det(cov_avg)
-    eps = 1e-8  # to avoid divide by 0
-    term2 = 0.5 * torch.log((det_avg + eps) / torch.sqrt((det_cov1 + eps) * (det_cov2 + eps)))
-
-    bd = term1 + term2
-    return torch.exp(-bd).item()
-
-def get_bounds(gmm, indices):
-    locs = gmm.component_distribution.loc
-    stds = gmm.component_distribution.stddev
-
-    means = locs[indices]
-    std_devs = stds[indices]
-
-    mean = means.mean(dim=0)
-    std = std_devs.mean(dim=0)
-    return [
-        (mean[0] - std[0], mean[0] + std[0]),
-        (mean[1] - std[1], mean[1] + std[1])
-    ]
-    # probs = gmm.mixture_distribution.probs
-    # weights = probs[indices]
-    # weights = weights.unsqueeze(1)  # [num_group, 1]
-    # weighted_mean = (weights * means).sum(dim=0)
-    # weighted_std = (weights * std_devs).sum(dim=0)
-    #
-    # return [
-    #     (weighted_mean[0] - weighted_std[0], weighted_mean[0] + weighted_std[0]),
-    #     (weighted_mean[1] - weighted_std[1], weighted_mean[1] + weighted_std[1])
-    # ]
-
 
 def collapse_into_gaussian(locs, covs, probs):
     weights = probs / probs.sum()
@@ -153,7 +102,18 @@ def collapse_into_gaussian(locs, covs, probs):
     return mean, cov
 
 
-def generate_non_overlapping_shells_w2_optimal(gmm, threshold=2):
+def clip_locations(locs, shell):
+    grid_list = [torch.sort(torch.unique(locs[:, i]))[0] for i in range(locs.shape[1])]
+    grid_list_clipped = []
+    for i, (dim_grid, (lower, upper)) in enumerate(zip(grid_list, shell)):
+        in_bounds = (dim_grid >= lower) & (dim_grid <= upper)
+        grid_list_clipped.append(dim_grid[in_bounds])
+    return grid_list_clipped
+
+
+def generate_non_overlapping_shells(gmm, threshold=2, grid_type="w2-gaussian-optimal", num_locs=10):
+    assert grid_type in ["w2-gaussian-optimal", "uniform"], "grid_type must be 'w2-gaussian-optimal' or 'uniform'"
+
     num_components = gmm.component_distribution.batch_shape[0]
     locs = gmm.component_distribution.loc
     covs = gmm.component_distribution.covariance_matrix
@@ -163,40 +123,20 @@ def generate_non_overlapping_shells_w2_optimal(gmm, threshold=2):
     groups = []
     tree = KDTree(locs)
 
+    # grouping based on location of mean and overlap based on MW2
     if num_components == 1:
-        mean, cov = collapse_into_gaussian(locs, covs, probs)
-        std = torch.sqrt(torch.diag(cov))
-        shell = [
-            (mean[0] - std[0], mean[0] + std[0]),
-            (mean[1] - std[1], mean[1] + std[1])
-        ]
-        norm = dd.MultivariateNormal(loc=mean, covariance_matrix=cov)
-        disc = dd.discretization_generator(norm, num_locs=10)
-        locs_norm = disc.locs
-
-        grid_list = [torch.sort(torch.unique(locs_norm[:, i]))[0] for i in range(locs_norm.shape[1])]
-        grid_list_clipped = []
-        for i, (dim_grid, (lower, upper)) in enumerate(zip(grid_list, shell)):
-            in_bounds = (dim_grid >= lower) & (dim_grid <= upper)
-            grid_list_clipped.append(dim_grid[in_bounds])
-
-        z = mean
-
-        return [shell], [grid_list_clipped], z
-
+        groups = [[0]]
     else:
         for i in range(num_components):
             if i in visited:
                 continue
-
             group = [i]
-            _, neighbours = tree.query(locs[i], k=num_components)  # nearest mean
+            _, neighbours = tree.query(locs[i], k=num_components)
+            neighbours = np.atleast_1d(neighbours).tolist()
 
             for j in neighbours:
                 if j == i or j in visited:
                     continue
-
-                # use of MW2 to compare as its Gaussian components with weights probs
                 a = dd.MixtureMultivariateNormal(
                     mixture_distribution=torch.distributions.Categorical(probs=probs[i].unsqueeze(0)),
                     component_distribution=dd.MultivariateNormal(loc=locs[i].unsqueeze(0),
@@ -206,132 +146,90 @@ def generate_non_overlapping_shells_w2_optimal(gmm, threshold=2):
                     component_distribution=dd.MultivariateNormal(loc=locs[j].unsqueeze(0),
                                                                  covariance_matrix=covs[j].unsqueeze(0)))
                 w2 = GMMWas.w2(a, b)
-
                 print(f'w2 between multi norm {i} and {j}: {w2}')
-
                 if w2 < threshold:
                     group.append(j)
                     visited.add(j)
-
             visited.add(i)
             groups.append(group)
             print(f'Grouped components: {group}')
 
-        shells = []
-        offset = 0.0
-        grid_locations_per_shell = []
-        for group in groups:
-            group_locs = locs[group]
-            group_covs = covs[group]
-            group_probs = probs[group]
+    shells = []
+    grid_locations_per_shell = []
 
-            mean, cov = collapse_into_gaussian(group_locs, group_covs, group_probs)
-            std = torch.sqrt(torch.diag(cov))
+    for group in groups:
+        group_locs = locs[group]
+        group_covs = covs[group]
+        group_probs = probs[group]
 
-            # shifted_mean = torch.tensor([offset + mean[0], mean[1]])
-            # shell = [
-            #     (shifted_mean[0] - std[0], shifted_mean[0] + std[0]),
-            #     (shifted_mean[1] - std[1], shifted_mean[1] + std[1])
-            # ]
-            # shells.append(shell)
-            # offset += 2 * std[0]
+        # approximating groups of components by one Gaussian
+        mean, cov = collapse_into_gaussian(group_locs, group_covs, group_probs)
+        std = torch.sqrt(torch.diag(cov))
 
+        if grid_type == "uniform":
+            # uniform with one std is ~60% mass
             shell = [
-                (mean[0] - 2*std[0], mean[0] + 2*std[0]),
-                (mean[1] - 2*std[1], mean[1] + 2*std[1])
+                (mean[0] - std[0], mean[0] + std[0]),
+                (mean[1] - std[1], mean[1] + std[1])
+            ]
+            shells.append(shell)
+        else:
+            # 2std ~95% mass
+            shell = [
+                (mean[0] - 2 * std[0], mean[0] + 2 * std[0]),
+                (mean[1] - 2 * std[1], mean[1] + 2 * std[1])
             ]
             shells.append(shell)
 
             norm = dd.MultivariateNormal(loc=mean, covariance_matrix=cov)
-            disc = dd.discretization_generator(norm, num_locs=10)
+            disc = dd.discretization_generator(norm, num_locs=num_locs)
             locs_norm = disc.locs
-            # take signature locations for grid
-            grid_list = [torch.sort(torch.unique(locs_norm[:, i]))[0] for i in range(locs_norm.shape[1])]
-            grid_list_clipped = []  # removing locations outside shell region
-            for i, (dim_grid, (lower, upper)) in enumerate(zip(grid_list, shell)):
-                in_bounds = (dim_grid >= lower) & (dim_grid <= upper)
-                grid_list_clipped.append(dim_grid[in_bounds])  # locations per dimension
 
-            grid_locations_per_shell.append(grid_list_clipped)  # locations per shell
+            grid_list_clipped = clip_locations(locs_norm, shell)
+            grid_locations_per_shell.append(grid_list_clipped)
 
-        z = (probs.unsqueeze(1) * locs).sum(dim=0)  # weighted mean location
+    z = (probs.unsqueeze(1) * locs).sum(dim=0)  # same for both methods
+
+    if grid_type == "uniform":
+        return shells, z
+    else:
         return shells, grid_locations_per_shell, z
 
-def generate_non_overlapping_shells_uniform_grids(gmm, threshold=2):
-    num_components = gmm.component_distribution.batch_shape[0]
-    locs = gmm.component_distribution.loc
-    covs = gmm.component_distribution.covariance_matrix
-    probs = gmm.mixture_distribution.probs
 
-    visited = set()
-    groups = []
-    tree = KDTree(locs)
+def shelling(gmm, grid_type="w2-gaussian-optimal", threshold=2, num_locs=10):
+    """
+    Combined logic
+    Args:
+        gmm:
+        grid_type:
+        threshold:
+        num_locs:
 
-    if num_components == 1:
-        mean, cov = collapse_into_gaussian(locs, covs, probs)
-        std = torch.sqrt(torch.diag(cov))
-        shell = [
-            (mean[0] - std[0], mean[0] + std[0]),
-            (mean[1] - std[1], mean[1] + std[1])
-        ]
-        z = mean
+    Returns: probs_all, locs_all, total_w2, all_R1_grids from quantization_gmm_shells
 
-        return [shell], z
+    """
+    if grid_type == "w2-gaussian-optimal":
+        shells, grid_locations_per_shell, z = generate_non_overlapping_shells(
+            gmm=gmm, threshold=threshold, grid_type=grid_type, num_locs=num_locs
+        )
+        return quantization_gmm_shells(gmm, shells, z, resolutions=None, paddings=None,
+                                       grid_locs=grid_locations_per_shell)
 
+    elif grid_type == "uniform":
+        shells, z = generate_non_overlapping_shells(
+            gmm=gmm, threshold=threshold, grid_type=grid_type
+        )
+        return quantization_gmm_shells(gmm, shells, z,
+                                       resolutions=[(10, 10)] * len(shells),
+                                       paddings=[0.1] * len(shells),
+                                       grid_locs=None)  # default grid settings
     else:
-        for i in range(num_components):
-            if i in visited:
-                continue
-
-            group = [i]
-            _, neighbours = tree.query(locs[i], k=num_components)  # nearest mean
-
-            for j in neighbours:
-                if j == i or j in visited:
-                    continue
-
-                # use of MW2 to compare as its Gaussian components with weights probs
-                a = dd.MixtureMultivariateNormal(
-                    mixture_distribution=torch.distributions.Categorical(probs=probs[i].unsqueeze(0)),
-                    component_distribution=dd.MultivariateNormal(loc=locs[i].unsqueeze(0),
-                                                                 covariance_matrix=covs[i].unsqueeze(0)))
-                b = dd.MixtureMultivariateNormal(
-                    mixture_distribution=torch.distributions.Categorical(probs=probs[j].unsqueeze(0)),
-                    component_distribution=dd.MultivariateNormal(loc=locs[j].unsqueeze(0),
-                                                                 covariance_matrix=covs[j].unsqueeze(0)))
-                w2 = GMMWas.w2(a, b)
-
-                print(f'w2 between multi norm {i} and {j}: {w2}')
-
-                if w2 < threshold:
-                    group.append(j)
-                    visited.add(j)
-
-            visited.add(i)
-            groups.append(group)
-            print(f'Grouped components: {group}')
-
-        shells = []
-        for group in groups:
-            group_locs = locs[group]
-            group_covs = covs[group]
-            group_probs = probs[group]
-
-            mean, cov = collapse_into_gaussian(group_locs, group_covs, group_probs)
-            std = torch.sqrt(torch.diag(cov))
-
-            shell = [
-                (mean[0] - 2*std[0], mean[0] + 2*std[0]),
-                (mean[1] - 2*std[1], mean[1] + 2*std[1])
-            ]
-            shells.append(shell)
-        z = (probs.unsqueeze(1) * locs).sum(dim=0)  # weighted mean location
-        return shells, z
+        raise ValueError("grid_type must be either 'w2-gaussian-optimal' or 'uniform'")
 
 
 if __name__ == "__main__":
     num_dims = 2
-    num_mix_elems = 4
+    num_mix_elems = 5
     batch_size = torch.Size()
     torch.manual_seed(1)
 
@@ -534,9 +432,9 @@ if __name__ == "__main__":
 
     # shell_inputs = [
     #     [(torch.tensor(-1.0), torch.tensor(-0.6)), (torch.tensor(-1.0), torch.tensor(-0.6))],
-    #     [(torch.tensor(-0.5), torch.tensor(1.0)), (torch.tensor(-0.5), torch.tensor(1.0))],
-    #     [(torch.tensor(-1.5), torch.tensor(-1.1)), (torch.tensor(-1.5), torch.tensor(-1.1))]
+    #     [(torch.tensor(-1.0), torch.tensor(-0.6)), (torch.tensor(-1.0), torch.tensor(-0.6))],
     # ]
+    # shell_inputs = [[(torch.tensor(-1.0), torch.tensor(-0.6)), (torch.tensor(-1.0), torch.tensor(-0.6))]]
     # locs_p = gmm.component_distribution.loc  # [num_components, dim]
     # std_devs = gmm.component_distribution.stddev
     # shell_inputs = []
@@ -549,66 +447,68 @@ if __name__ == "__main__":
 
     # setting shells by heuristic
     # shell_inputs, grid_locs, z = generate_non_overlapping_shells_w2_optimal(gmm)
-    shell_inputs, z = generate_non_overlapping_shells_uniform_grids(gmm)
-
-    # total_w2 = 0.0
-    w2_squared_sum = torch.zeros(1)
-    all_locs = []
-    all_probs = []
-    all_R1_grids = []
-    all_z_probs = torch.zeros(1)
-
-    # for shell_input, grid_locs_per_shell in zip(shell_inputs, grid_locs):
-    #     R1_grid = Grid(locs_per_dim=grid_locs_per_shell, bounds=shell_input)
+    # shell_inputs, z = generate_non_overlapping_shells(gmm, grid_type='uniform')
+    #
+    # # total_w2 = 0.0
+    # w2_squared_sum = torch.zeros(1)
+    # all_locs = []
+    # all_probs = []
+    # all_R1_grids = []
+    # all_z_probs = torch.zeros(1)
+    #
+    # # for shell_input, grid_locs_per_shell in zip(shell_inputs, grid_locs):
+    # #     R1_grid = Grid(locs_per_dim=grid_locs_per_shell, bounds=shell_input)
+    # #     locs_R1 = R1_grid.get_locs()
+    # for shell_input in shell_inputs:
+    #     R1_grid = Grid.shell(shell_input, (10, 10), 0.1)
     #     locs_R1 = R1_grid.get_locs()
-    for shell_input in shell_inputs:
-        R1_grid = Grid.shell(shell_input, (10, 10), 0.1)
-        locs_R1 = R1_grid.get_locs()
+    #
+    #     R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
+    #     R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
+    #
+    #     disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
+    #     disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
+    #     disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
+    #
+    #     w2_R1 = disc_R1.w2
+    #     w2_R1_inner = disc_R1_inner.w2
+    #     w2_R1_outer = disc_R1_outer.w2
+    #
+    #     w2_squared_sum += (w2_R1.pow(2) + (w2_R1_outer.pow(2) - w2_R1_inner.pow(2)))
+    #
+    #     # w2_shell = w2_R1 + (w2_R1_outer - w2_R1_inner)
+    #     # total_w2 += w2_shell
+    #
+    #     print(f"Shell bounds: {shell_input}")
+    #     # print(f"  - W2 error: {w2_shell}")
+    #
+    #     z_probs_R1 = disc_R1.z_probs
+    #     probs_R1 = disc_R1.probs
+    #     print(f'Prob mass of z: {z_probs_R1.item()}')
+    #     print(f'Prob mass of grid: {probs_R1.sum()}')
+    #
+    #     # normalize wrt z mass
+    #     grid_mass = probs_R1.sum().item()
+    #     z_mass = z_probs_R1.item()  # already relative to total mass of 1
+    #     mass_scale = (1 - z_mass)   # percentage mass left over in grid
+    #     probs_R1 = probs_R1 * mass_scale
+    #     print(f'Prob mass of grid normalized by sum of grid and z: {probs_R1.sum().item()}')
+    #
+    #     all_locs.append(locs_R1)
+    #     all_probs.append(probs_R1)
+    #     all_z_probs += z_probs_R1
+    #     all_R1_grids.append(R1_grid)
+    #
+    # all_locs = torch.cat(all_locs, dim=0)
+    # all_probs = torch.cat(all_probs, dim=0)
+    # locs_all = torch.cat([all_locs, z.unsqueeze(0)], dim=0)
+    # probs_all = torch.cat([all_probs, all_z_probs], dim=0)
+    #
+    # total_w2 = w2_squared_sum.sqrt().item()
+    #
+    # probs_all = probs_all / probs_all.sum(dim=-1, keepdim=True)  # normalize again wrt to all grids
 
-        R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
-        R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
-
-        disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
-        disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
-        disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
-
-        w2_R1 = disc_R1.w2
-        w2_R1_inner = disc_R1_inner.w2
-        w2_R1_outer = disc_R1_outer.w2
-
-        w2_squared_sum += (w2_R1.pow(2) + (w2_R1_outer.pow(2) - w2_R1_inner.pow(2)))
-
-        # w2_shell = w2_R1 + (w2_R1_outer - w2_R1_inner)
-        # total_w2 += w2_shell
-
-        print(f"Shell bounds: {shell_input}")
-        # print(f"  - W2 error: {w2_shell}")
-
-        z_probs_R1 = disc_R1.z_probs
-        probs_R1 = disc_R1.probs
-        print(f'Prob mass of z: {z_probs_R1.item()}')
-        print(f'Prob mass of grid: {probs_R1.sum()}')
-
-        # normalize wrt z mass
-        grid_mass = probs_R1.sum().item()
-        z_mass = z_probs_R1.item()  # already relative to total mass of 1
-        mass_scale = (1 - z_mass)   # percentage mass left over in grid
-        probs_R1 = probs_R1 * mass_scale
-        print(f'Prob mass of grid normalized by sum of grid and z: {probs_R1.sum().item()}')
-
-        all_locs.append(locs_R1)
-        all_probs.append(probs_R1)
-        all_z_probs += z_probs_R1
-        all_R1_grids.append(R1_grid)
-
-    all_locs = torch.cat(all_locs, dim=0)
-    all_probs = torch.cat(all_probs, dim=0)
-    locs_all = torch.cat([all_locs, z.unsqueeze(0)], dim=0)
-    probs_all = torch.cat([all_probs, all_z_probs], dim=0)
-
-    total_w2 = w2_squared_sum.sqrt().item()
-
-    probs_all = probs_all / probs_all.sum(dim=-1, keepdim=True)  # normalize again wrt to all grids
+    probs_all, locs_all, total_w2, all_grids = shelling(gmm, grid_type="uniform")
 
     s = (probs_all - probs_all.min()) / (probs_all.max() - probs_all.min()) * 100
     print(f"Total W2 error over all shells: {total_w2}")
@@ -618,7 +518,7 @@ if __name__ == "__main__":
     # ax.scatter(locs_p[:, 0], locs_p[:, 1], label='GMM Component Means', s=50, color='red', alpha=0.6)  # means
     ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
     cmap = plt.cm.get_cmap('tab10')
-    for idx, R1 in enumerate(all_R1_grids):
+    for idx, R1 in enumerate(all_grids):
         core_lower_vertices_per_dim = R1.lower_vertices_per_dim
         core_upper_vertices_per_dim = R1.upper_vertices_per_dim
         for i in range(len(core_lower_vertices_per_dim[0])):
@@ -643,69 +543,103 @@ if __name__ == "__main__":
     plt.axis("equal")
     plt.show()
 
-    # setting shells by heuristic
-    shell_inputs, grid_locs, z = generate_non_overlapping_shells_w2_optimal(gmm)
-    # shell_inputs, z = generate_non_overlapping_shells_uniform_grids(gmm)
-
-    # total_w2 = 0.0
-    w2_squared_sum = torch.zeros(1)
-    all_locs = []
-    all_probs = []
-    all_R1_grids = []
-    all_z_probs = torch.zeros(1)
-
-    for shell_input, grid_locs_per_shell in zip(shell_inputs, grid_locs):
-        R1_grid = Grid(locs_per_dim=grid_locs_per_shell, bounds=shell_input)
-        locs_R1 = R1_grid.get_locs()
-    # for shell_input in shell_inputs:
-    #     R1_grid = Grid.shell(shell_input, (10, 10), 0.1)
+    # # setting shells by heuristic
+    # shell_inputs, grid_locs, z = generate_non_overlapping_shells(gmm)
+    # # shell_inputs, z = generate_non_overlapping_shells_uniform_grids(gmm)
+    #
+    # # total_w2 = 0.0
+    # w2_squared_sum = torch.zeros(1)
+    # all_locs = []
+    # all_probs = []
+    # all_R1_grids = []
+    # all_z_probs = torch.zeros(1)
+    #
+    # for shell_input, grid_locs_per_shell in zip(shell_inputs, grid_locs):
+    #     R1_grid = Grid(locs_per_dim=grid_locs_per_shell, bounds=shell_input)
     #     locs_R1 = R1_grid.get_locs()
+    # # for shell_input in shell_inputs:
+    # #     R1_grid = Grid.shell(shell_input, (10, 10), 0.1)
+    # #     locs_R1 = R1_grid.get_locs()
+    #
+    #     R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
+    #     R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
+    #
+    #     disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
+    #     disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
+    #     disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
+    #
+    #     w2_R1 = disc_R1.w2
+    #     w2_R1_inner = disc_R1_inner.w2
+    #     w2_R1_outer = disc_R1_outer.w2
+    #
+    #     w2_squared_sum += (w2_R1.pow(2) + (w2_R1_outer.pow(2) - w2_R1_inner.pow(2)))
+    #
+    #     # w2_shell = w2_R1 + (w2_R1_outer - w2_R1_inner)
+    #     # total_w2 += w2_shell
+    #
+    #     print(f"Shell bounds: {shell_input}")
+    #     # print(f"  - W2 error: {w2_shell}")
+    #
+    #     z_probs_R1 = disc_R1.z_probs
+    #     probs_R1 = disc_R1.probs
+    #     print(f'Prob mass of z: {z_probs_R1.item()}')
+    #     print(f'Prob mass of grid: {probs_R1.sum()}')
+    #
+    #     # normalize wrt z mass
+    #     grid_mass = probs_R1.sum().item()
+    #     z_mass = z_probs_R1.item()  # already relative to total mass of 1
+    #     mass_scale = (1 - z_mass)  # percentage mass left over in grid
+    #     probs_R1 = probs_R1 * mass_scale
+    #     print(f'Prob mass of grid normalized by sum of grid and z: {probs_R1.sum().item()}')
+    #
+    #     all_locs.append(locs_R1)
+    #     all_probs.append(probs_R1)
+    #     all_z_probs += z_probs_R1
+    #     all_R1_grids.append(R1_grid)
+    #
+    # all_locs = torch.cat(all_locs, dim=0)
+    # all_probs = torch.cat(all_probs, dim=0)
+    # locs_all = torch.cat([all_locs, z.unsqueeze(0)], dim=0)
+    # probs_all = torch.cat([all_probs, all_z_probs], dim=0)
+    #
+    # total_w2 = w2_squared_sum.sqrt().item()
+    #
+    # probs_all = probs_all / probs_all.sum(dim=-1, keepdim=True)  # normalize again wrt to all grids
+    #
+    # s = (probs_all - probs_all.min()) / (probs_all.max() - probs_all.min()) * 100
+    # print(f"Total W2 error over all shells: {total_w2}")
+    #
+    # plt.figure(figsize=(8, 6))
+    # ax = plt.gca()
+    # # ax.scatter(locs_p[:, 0], locs_p[:, 1], label='GMM Component Means', s=50, color='red', alpha=0.6)  # means
+    # ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
+    # cmap = plt.cm.get_cmap('tab10')
+    # for idx, R1 in enumerate(all_R1_grids):
+    #     core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+    #     core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+    #     for i in range(len(core_lower_vertices_per_dim[0])):
+    #         for j in range(len(core_lower_vertices_per_dim[1])):
+    #             x0 = core_lower_vertices_per_dim[0][i].item()
+    #             x1 = core_upper_vertices_per_dim[0][i].item()
+    #             y0 = core_lower_vertices_per_dim[1][j].item()
+    #             y1 = core_upper_vertices_per_dim[1][j].item()
+    #             rect = patches.Rectangle(
+    #                 (x0, y0),
+    #                 x1 - x0,
+    #                 y1 - y0,
+    #                 edgecolor='blue',
+    #                 facecolor='none',
+    #                 linewidth=1.5,
+    #                 linestyle='-'
+    #             )
+    #             ax.add_patch(rect)
+    # plt.title(f"Discretization for GMM with heuristic for w2-optimal-shells, W2: {total_w2}")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.axis("equal")
+    # plt.show()
 
-        R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
-        R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
-
-        disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
-        disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
-        disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
-
-        w2_R1 = disc_R1.w2
-        w2_R1_inner = disc_R1_inner.w2
-        w2_R1_outer = disc_R1_outer.w2
-
-        w2_squared_sum += (w2_R1.pow(2) + (w2_R1_outer.pow(2) - w2_R1_inner.pow(2)))
-
-        # w2_shell = w2_R1 + (w2_R1_outer - w2_R1_inner)
-        # total_w2 += w2_shell
-
-        print(f"Shell bounds: {shell_input}")
-        # print(f"  - W2 error: {w2_shell}")
-
-        z_probs_R1 = disc_R1.z_probs
-        probs_R1 = disc_R1.probs
-        print(f'Prob mass of z: {z_probs_R1.item()}')
-        print(f'Prob mass of grid: {probs_R1.sum()}')
-
-        # normalize wrt z mass
-        grid_mass = probs_R1.sum().item()
-        z_mass = z_probs_R1.item()  # already relative to total mass of 1
-        mass_scale = (1 - z_mass)  # percentage mass left over in grid
-        probs_R1 = probs_R1 * mass_scale
-        print(f'Prob mass of grid normalized by sum of grid and z: {probs_R1.sum().item()}')
-
-        all_locs.append(locs_R1)
-        all_probs.append(probs_R1)
-        all_z_probs += z_probs_R1
-        all_R1_grids.append(R1_grid)
-
-    all_locs = torch.cat(all_locs, dim=0)
-    all_probs = torch.cat(all_probs, dim=0)
-    locs_all = torch.cat([all_locs, z.unsqueeze(0)], dim=0)
-    probs_all = torch.cat([all_probs, all_z_probs], dim=0)
-
-    total_w2 = w2_squared_sum.sqrt().item()
-
-    probs_all = probs_all / probs_all.sum(dim=-1, keepdim=True)  # normalize again wrt to all grids
-
+    probs_all, locs_all, total_w2, all_grids = shelling(gmm, grid_type="w2-gaussian-optimal")
     s = (probs_all - probs_all.min()) / (probs_all.max() - probs_all.min()) * 100
     print(f"Total W2 error over all shells: {total_w2}")
 
@@ -714,7 +648,7 @@ if __name__ == "__main__":
     # ax.scatter(locs_p[:, 0], locs_p[:, 1], label='GMM Component Means', s=50, color='red', alpha=0.6)  # means
     ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
     cmap = plt.cm.get_cmap('tab10')
-    for idx, R1 in enumerate(all_R1_grids):
+    for idx, R1 in enumerate(all_grids):
         core_lower_vertices_per_dim = R1.lower_vertices_per_dim
         core_upper_vertices_per_dim = R1.upper_vertices_per_dim
         for i in range(len(core_lower_vertices_per_dim[0])):
