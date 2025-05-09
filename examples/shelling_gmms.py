@@ -12,9 +12,41 @@ import numpy as np
 from scipy.spatial import KDTree
 import GMMWas
 
+
+def shelling(gmm, grid_type="w2-gaussian-optimal", threshold=2, num_locs=10):
+    """
+    Combined logic
+    Args:
+        gmm:
+        grid_type:
+        threshold:
+        num_locs:
+
+    Returns: probs_all, locs_all, total_w2, all_R1_grids from quantization_gmm_shells
+
+    """
+    if grid_type == "w2-gaussian-optimal":
+        shells, grid_locations_per_shell, z = generate_non_overlapping_shells(
+            gmm=gmm, threshold=threshold, grid_type=grid_type, num_locs=num_locs
+        )
+        return quantization_gmm_shells(gmm, shells, z, resolutions=None, paddings=None,
+                                       grid_locs=grid_locations_per_shell)
+
+    elif grid_type == "uniform":
+        shells, z = generate_non_overlapping_shells(
+            gmm=gmm, threshold=threshold, grid_type=grid_type
+        )
+        return quantization_gmm_shells(gmm, shells, z,
+                                       resolutions=[(10, 10)] * len(shells),
+                                       paddings=[0.1] * len(shells),
+                                       grid_locs=None)  # default grid settings
+    else:
+        raise ValueError("grid_type must be either 'w2-gaussian-optimal' or 'uniform'")
+
+
 def quantization_gmm_shells(gmm, shell_inputs, z, resolutions=None, paddings=None, grid_locs=None):
     """
-    Compute the quantization of a GMM for NON-overlapping grids
+    Compute the quantization of a GMM for set shell regions
     Args:
         gmm:
         shell_inputs:
@@ -27,6 +59,11 @@ def quantization_gmm_shells(gmm, shell_inputs, z, resolutions=None, paddings=Non
         w2:
 
     """
+    num_shells = len(shell_inputs)
+    if resolutions is None:
+        resolutions = [(10, 10)] * num_shells
+    if paddings is None:
+        paddings = [0.1] * num_shells
 
     w2_squared_sum = torch.zeros(1)
     all_locs = []
@@ -196,40 +233,9 @@ def generate_non_overlapping_shells(gmm, threshold=2, grid_type="w2-gaussian-opt
         return shells, grid_locations_per_shell, z
 
 
-def shelling(gmm, grid_type="w2-gaussian-optimal", threshold=2, num_locs=10):
-    """
-    Combined logic
-    Args:
-        gmm:
-        grid_type:
-        threshold:
-        num_locs:
-
-    Returns: probs_all, locs_all, total_w2, all_R1_grids from quantization_gmm_shells
-
-    """
-    if grid_type == "w2-gaussian-optimal":
-        shells, grid_locations_per_shell, z = generate_non_overlapping_shells(
-            gmm=gmm, threshold=threshold, grid_type=grid_type, num_locs=num_locs
-        )
-        return quantization_gmm_shells(gmm, shells, z, resolutions=None, paddings=None,
-                                       grid_locs=grid_locations_per_shell)
-
-    elif grid_type == "uniform":
-        shells, z = generate_non_overlapping_shells(
-            gmm=gmm, threshold=threshold, grid_type=grid_type
-        )
-        return quantization_gmm_shells(gmm, shells, z,
-                                       resolutions=[(10, 10)] * len(shells),
-                                       paddings=[0.1] * len(shells),
-                                       grid_locs=None)  # default grid settings
-    else:
-        raise ValueError("grid_type must be either 'w2-gaussian-optimal' or 'uniform'")
-
-
 if __name__ == "__main__":
     num_dims = 2
-    num_mix_elems = 5
+    num_mix_elems = 3
     batch_size = torch.Size()
     torch.manual_seed(1)
 
