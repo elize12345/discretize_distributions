@@ -11,8 +11,8 @@ import GMMWas
 import numpy as np
 from scipy.spatial import KDTree
 import GMMWas
-from sklearn.cluster import DBSCAN, KMeans
-
+from sklearn.cluster import DBSCAN
+from sklearn.neighbors import NearestNeighbors
 
 def shelling(gmm, grid_type="w2-gaussian-optimal", threshold=2, num_locs=10):
     """
@@ -258,7 +258,27 @@ def generate_non_overlapping_shells(gmm, threshold=2, grid_type="w2-gaussian-opt
     else:
         return shells, grid_locations_per_shell, z
 
-def dbscan_shells(gmm, eps=0.5, min_samples=20):
+def estimate_eps(samples, min_samples=20, percentile=95, plot=False):
+    samples_np = samples.detach().numpy()
+    nbrs = NearestNeighbors(n_neighbors=min_samples).fit(samples_np)
+    distances, _ = nbrs.kneighbors(samples_np)
+    k_distances = distances[:, -1]
+    k_distances = np.sort(k_distances)
+    eps = np.percentile(k_distances, percentile)
+    if plot:
+        import matplotlib.pyplot as plt
+        plt.plot(k_distances[::-1])
+        plt.axhline(y=eps, color='r', linestyle='--', label=f'eps = {eps:.4f}')
+        plt.title(f"k-distance plot (min_samples={min_samples})")
+        plt.xlabel("Sorted index")
+        plt.ylabel("k-distance")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    return eps
+
+def dbscan_shells(gmm, eps=None, min_samples=20, eps_percentile=95):
     # assuming knowledge about gmm to set eps and min_samples
     # gmm stats for z location
     means = gmm.component_distribution.loc
@@ -268,13 +288,16 @@ def dbscan_shells(gmm, eps=0.5, min_samples=20):
     num_samples = torch.tensor([100*num_components])
     samples = gmm.sample((num_samples,))
 
+    if eps is None:  # elbow method for eps
+        eps = estimate_eps(samples, min_samples=min_samples, percentile=eps_percentile, plot=True)
+
     X = samples.detach().numpy()
     clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
     labels = clustering.labels_
 
     shells = []
     unique_labels = set(labels)
-    unique_labels.discard(-1)  # noise
+    unique_labels.discard(-1)  # dbscan identifies noise, so we can discard it here
 
     for label in unique_labels:
         mask = torch.tensor(labels == label)
@@ -307,16 +330,16 @@ def dbscan_shells(gmm, eps=0.5, min_samples=20):
                 print(f'Shells overlap! Change parameters eps and min_samples.')
 
         if len(final_shells) == 0:
-            print(f'No shells found! Increase eps and/or lower min_samples.')
+            print(f'No shells found! Increase eps and/or lower min_samples required in cluster.')
     # increase region of eps so more points included or lower amount of points needed in a cluster
         return final_shells, z
 
-def use_w2_locations(gmm, shells, num_locs=100):
+def set_grid_locations(gmm, shells, num_locs=100):
     disc = dd.discretization_generator(gmm, num_locs)
     locs_norm = disc.locs
     grid_locations_per_shell = []
     for shell in shells:
-        # if grid too tiny then no locations that fit in grid - what to do?
+        # if grid too tiny then no locations that fit in grid - expand grid manually
         grid_list_clipped = clip_locations(locs_norm, shell)
         if any(len(g) == 0 for g in grid_list_clipped):
             print('Grid too small, no locations fit inside, expand grid!')
@@ -327,7 +350,7 @@ def use_w2_locations(gmm, shells, num_locs=100):
 
 if __name__ == "__main__":
     num_dims = 2  # need to generalize for higher dims later
-    num_mix_elems = 4
+    num_mix_elems = 3
     batch_size = torch.Size()
     torch.manual_seed(1)
 
@@ -347,7 +370,8 @@ if __name__ == "__main__":
     #                                   [[0.05, 0.0000],
     #                                    [0.0000, 0.05]]])
     # probs = torch.tensor([0.6, 0.2, 0.2, 0.6])
-    #
+
+    # normalize
     probs = probs / probs.sum(dim=-1, keepdim=True)
 
     gmm = dd.MixtureMultivariateNormal(
@@ -451,85 +475,116 @@ if __name__ == "__main__":
     plt.show()
 
     # uniform disjoint grids
-    probs_all, locs_all, total_w2, all_grids = shelling(gmm, grid_type="uniform")
-    s = (probs_all - probs_all.min()) / (probs_all.max() - probs_all.min()) * 100
-    print(f"Total W2 error over all shells: {total_w2}")
+    # probs_all, locs_all, total_w2, all_grids = shelling(gmm, grid_type="uniform")
+    # s = (probs_all - probs_all.min()) / (probs_all.max() - probs_all.min()) * 100
+    # print(f"Total W2 error over all shells: {total_w2}")
+    #
+    # plt.figure(figsize=(8, 6))
+    # ax = plt.gca()
+    # plt.scatter(locs_gmm.detach().numpy()[:,0], locs_gmm.detach().numpy()[:,1], label='original sig locs',
+    #             color='blue', marker='o', alpha=0.6)
+    # ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
+    # cmap = plt.colormaps.get_cmap('tab10')
+    # for idx, R1 in enumerate(all_grids):
+    #     core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+    #     core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+    #     for i in range(len(core_lower_vertices_per_dim[0])):
+    #         for j in range(len(core_lower_vertices_per_dim[1])):
+    #             x0 = core_lower_vertices_per_dim[0][i].item()
+    #             x1 = core_upper_vertices_per_dim[0][i].item()
+    #             y0 = core_lower_vertices_per_dim[1][j].item()
+    #             y1 = core_upper_vertices_per_dim[1][j].item()
+    #             rect = patches.Rectangle(
+    #                 (x0, y0),
+    #                 x1 - x0,
+    #                 y1 - y0,
+    #                 edgecolor='blue',
+    #                 facecolor='none',
+    #                 linewidth=1.5,
+    #                 linestyle='-'
+    #             )
+    #             ax.add_patch(rect)
+    # plt.title(f"Discretization for GMM with uniform shells W2: {total_w2}")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.axis("equal")
+    # plt.show()
 
-    plt.figure(figsize=(8, 6))
-    ax = plt.gca()
-    # ax.scatter(locs_p[:, 0], locs_p[:, 1], label='GMM Component Means', s=50, color='red', alpha=0.6)  # means
-    ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
-    cmap = plt.colormaps.get_cmap('tab10')
-    for idx, R1 in enumerate(all_grids):
-        core_lower_vertices_per_dim = R1.lower_vertices_per_dim
-        core_upper_vertices_per_dim = R1.upper_vertices_per_dim
-        for i in range(len(core_lower_vertices_per_dim[0])):
-            for j in range(len(core_lower_vertices_per_dim[1])):
-                x0 = core_lower_vertices_per_dim[0][i].item()
-                x1 = core_upper_vertices_per_dim[0][i].item()
-                y0 = core_lower_vertices_per_dim[1][j].item()
-                y1 = core_upper_vertices_per_dim[1][j].item()
-                rect = patches.Rectangle(
-                    (x0, y0),
-                    x1 - x0,
-                    y1 - y0,
-                    edgecolor='blue',
-                    facecolor='none',
-                    linewidth=1.5,
-                    linestyle='-'
-                )
-                ax.add_patch(rect)
-    plt.title(f"Discretization for GMM with uniform shells W2: {total_w2}")
-    plt.legend()
-    plt.grid(True)
-    plt.axis("equal")
-    plt.show()
-
-    probs_all, locs_all, total_w2, all_grids = shelling(gmm, grid_type="w2-gaussian-optimal")
-    s = (probs_all - probs_all.min()) / (probs_all.max() - probs_all.min()) * 100
-    print(f"Total W2 error over all shells: {total_w2}")
-
-    plt.figure(figsize=(8, 6))
-    ax = plt.gca()
-    # ax.scatter(locs_p[:, 0], locs_p[:, 1], label='GMM Component Means', s=50, color='red', alpha=0.6)  # means
-    ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
-    cmap = plt.colormaps.get_cmap('tab10')
-    for idx, R1 in enumerate(all_grids):
-        core_lower_vertices_per_dim = R1.lower_vertices_per_dim
-        core_upper_vertices_per_dim = R1.upper_vertices_per_dim
-        for i in range(len(core_lower_vertices_per_dim[0])):
-            for j in range(len(core_lower_vertices_per_dim[1])):
-                x0 = core_lower_vertices_per_dim[0][i].item()
-                x1 = core_upper_vertices_per_dim[0][i].item()
-                y0 = core_lower_vertices_per_dim[1][j].item()
-                y1 = core_upper_vertices_per_dim[1][j].item()
-                rect = patches.Rectangle(
-                    (x0, y0),
-                    x1 - x0,
-                    y1 - y0,
-                    edgecolor='blue',
-                    facecolor='none',
-                    linewidth=1.5,
-                    linestyle='-'
-                )
-                ax.add_patch(rect)
-    plt.title(f"Discretization for GMM with heuristic for w2-optimal-shells, W2: {total_w2}")
-    plt.legend()
-    plt.grid(True)
-    plt.axis("equal")
-    plt.show()
+    # probs_all, locs_all, total_w2, all_grids = shelling(gmm, grid_type="w2-gaussian-optimal")
+    # s = (probs_all - probs_all.min()) / (probs_all.max() - probs_all.min()) * 100
+    # print(f"Total W2 error over all shells: {total_w2}")
+    #
+    # plt.figure(figsize=(8, 6))
+    # ax = plt.gca()
+    # # ax.scatter(locs_p[:, 0], locs_p[:, 1], label='GMM Component Means', s=50, color='red', alpha=0.6)  # means
+    # ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
+    # cmap = plt.colormaps.get_cmap('tab10')
+    # for idx, R1 in enumerate(all_grids):
+    #     core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+    #     core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+    #     for i in range(len(core_lower_vertices_per_dim[0])):
+    #         for j in range(len(core_lower_vertices_per_dim[1])):
+    #             x0 = core_lower_vertices_per_dim[0][i].item()
+    #             x1 = core_upper_vertices_per_dim[0][i].item()
+    #             y0 = core_lower_vertices_per_dim[1][j].item()
+    #             y1 = core_upper_vertices_per_dim[1][j].item()
+    #             rect = patches.Rectangle(
+    #                 (x0, y0),
+    #                 x1 - x0,
+    #                 y1 - y0,
+    #                 edgecolor='blue',
+    #                 facecolor='none',
+    #                 linewidth=1.5,
+    #                 linestyle='-'
+    #             )
+    #             ax.add_patch(rect)
+    # plt.title(f"Discretization for GMM with heuristic for w2-optimal-shells, W2: {total_w2}")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.axis("equal")
+    # plt.show()
 
     # using clustering
-    # shells, z = identify_dense_regions(gmm)
     shells, z = dbscan_shells(gmm)
-    grid_locs = use_w2_locations(gmm, shells)
+    grid_locs = set_grid_locations(gmm, shells)
     probs, locs, w2, grids = quantization_gmm_shells(gmm, shells, z, grid_locs=grid_locs, paddings=[0.01]*len(shells))
     s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
     print(f"Total W2 error over all shells: {w2}")
 
     plt.figure(figsize=(8, 6))
     ax = plt.gca()
+    plt.scatter(locs_gmm.detach().numpy()[:,0], locs_gmm.detach().numpy()[:,1], label='original sig locs',
+                color='blue', marker='o', alpha=0.3)
     ax.scatter(locs[:, 0], locs[:, 1], label='Locs', color='red', alpha=0.6)  # locs
+    cmap = plt.colormaps.get_cmap('tab10')
+    for idx, R1 in enumerate(grids):
+        core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+        core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+        for i in range(len(core_lower_vertices_per_dim[0])):
+            for j in range(len(core_lower_vertices_per_dim[1])):
+                x0 = core_lower_vertices_per_dim[0][i].item()
+                x1 = core_upper_vertices_per_dim[0][i].item()
+                y0 = core_lower_vertices_per_dim[1][j].item()
+                y1 = core_upper_vertices_per_dim[1][j].item()
+                rect = patches.Rectangle(
+                    (x0, y0),
+                    x1 - x0,
+                    y1 - y0,
+                    edgecolor='blue',
+                    facecolor='none',
+                    linewidth=1.5,
+                    linestyle='-'
+                )
+                ax.add_patch(rect)
+    plt.title(f"Discretization for GMM with clustering heuristic, W2: {w2}")
+    plt.legend()
+    plt.grid(True)
+    plt.axis("equal")
+    plt.show()
+
+    plt.figure(figsize=(8, 6))
+    ax = plt.gca()
+    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)  # locs
     cmap = plt.colormaps.get_cmap('tab10')
     for idx, R1 in enumerate(grids):
         core_lower_vertices_per_dim = R1.lower_vertices_per_dim
