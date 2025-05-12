@@ -11,6 +11,7 @@ import GMMWas
 import numpy as np
 from scipy.spatial import KDTree
 import GMMWas
+from sklearn.cluster import DBSCAN, KMeans
 
 
 def shelling(gmm, grid_type="w2-gaussian-optimal", threshold=2, num_locs=10):
@@ -138,11 +139,15 @@ def collapse_into_gaussian(locs, covs, probs):
 
     return mean, cov
 
-def check_overlap(shell1,shell2):
-    return not (
-        shell1[0][1] <= shell2[0][0] or shell1[0][0] >= shell2[0][1] or
-        shell1[1][1] <= shell2[1][0] or shell1[1][0] >= shell2[1][1]
-    )
+def check_overlap(shell1,shell2, tol=1e-4):
+    # return not (
+    #     shell1[0][1] <= shell2[0][0] or shell1[0][0] >= shell2[0][1] or
+    #     shell1[1][1] <= shell2[1][0] or shell1[1][0] >= shell2[1][1]
+    # )
+    for (low1, high1), (low2, high2) in zip(shell1, shell2):
+        if float(high1) <= float(low2) + tol or float(low1) >= float(high2) - tol:
+            return False
+    return True
 
 def shift_shell(shell, dx=0.2, dy=0.2):
     return [
@@ -253,26 +258,96 @@ def generate_non_overlapping_shells(gmm, threshold=2, grid_type="w2-gaussian-opt
     else:
         return shells, grid_locations_per_shell, z
 
+def dbscan_shells(gmm, eps=0.5, min_samples=20):
+    # assuming knowledge about gmm to set eps and min_samples
+    # gmm stats for z location
+    means = gmm.component_distribution.loc
+    probs = gmm.mixture_distribution.probs
+
+    num_components = gmm.component_distribution.batch_shape[0]
+    num_samples = torch.tensor([100*num_components])
+    samples = gmm.sample((num_samples,))
+
+    X = samples.detach().numpy()
+    clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
+    labels = clustering.labels_
+
+    shells = []
+    unique_labels = set(labels)
+    unique_labels.discard(-1)  # noise
+
+    for label in unique_labels:
+        mask = torch.tensor(labels == label)
+        cluster_points = samples[mask]
+
+        # must be dense enough to form shell around it
+        if len(cluster_points) < min_samples:
+            # there can be very small clusters left in dbscan as EVERYTHING is clustered
+            continue
+
+        mean = cluster_points.mean(dim=0)
+
+        shell = [
+            (mean[0] - eps, mean[0] + eps),
+            (mean[1] - eps, mean[1] + eps)
+        ]
+        shells.append(shell)
+
+    z = (probs.unsqueeze(1) * means).sum(dim=0)  # z location stays as average of component means
+
+    # return shells, z
+    if len(shells) == 1:
+        return shells, z
+    else:
+        final_shells = []
+        for shell in shells:
+            if all(not check_overlap(shell, existing) for existing in final_shells):
+                final_shells.append(shell)
+            else:
+                print(f'Shells overlap! Change parameters eps and min_samples.')
+
+        if len(final_shells) == 0:
+            print(f'No shells found! Increase eps and/or lower min_samples.')
+    # increase region of eps so more points included or lower amount of points needed in a cluster
+        return final_shells, z
+
+def use_w2_locations(gmm, shells, num_locs=100):
+    disc = dd.discretization_generator(gmm, num_locs)
+    locs_norm = disc.locs
+    grid_locations_per_shell = []
+    for shell in shells:
+        # if grid too tiny then no locations that fit in grid - what to do?
+        grid_list_clipped = clip_locations(locs_norm, shell)
+        if any(len(g) == 0 for g in grid_list_clipped):
+            print('Grid too small, no locations fit inside, expand grid!')
+        grid_locations_per_shell.append(grid_list_clipped)
+
+    return grid_locations_per_shell
+
 
 if __name__ == "__main__":
-    num_dims = 2
-    num_mix_elems = 8
+    num_dims = 2  # need to generalize for higher dims later
+    num_mix_elems = 4
     batch_size = torch.Size()
     torch.manual_seed(1)
 
-    locs = torch.randn(batch_size + (num_mix_elems, num_dims,))
-    # locs = torch.tensor([[0.8, 0.8], [1.5, 1.5], [1.3, 1.3]])
     # only diagonal and pos def covariance matrices
     covariance_diag = torch.exp(torch.randn(batch_size + (num_mix_elems, num_dims,)))
     covariance_matrix = torch.diag_embed(covariance_diag)
-    # covariance_matrix = torch.tensor([[[0.5, 0.0000],
-    #                                    [0.0000, 0.5]],
-    #                                   [[0.2, 0.0000],
-    #                                    [0.0000, 0.2]],
-    #                                   [[0.5, 0.0000],
-    #                                    [0.0000, 0.5]]])
+    locs = torch.randn(batch_size + (num_mix_elems, num_dims,))
     probs = torch.rand(batch_size + (num_mix_elems,))
-    # probs = torch.tensor([0.6, 0.2, 0.2])
+
+    # locs = torch.tensor([[0.3, 0.3], [0.4, 0.4], [1.4, 1.4], [1.3, 1.3]])
+    # covariance_matrix = torch.tensor([[[0.02, 0.0000],
+    #                                    [0.0000, 0.02]],
+    #                                   [[0.03, 0.0000],
+    #                                    [0.0000, 0.06]],
+    #                                   [[0.02, 0.0000],
+    #                                    [0.0000, 0.02]],
+    #                                   [[0.05, 0.0000],
+    #                                    [0.0000, 0.05]]])
+    # probs = torch.tensor([0.6, 0.2, 0.2, 0.6])
+    #
     probs = probs / probs.sum(dim=-1, keepdim=True)
 
     gmm = dd.MixtureMultivariateNormal(
@@ -384,7 +459,7 @@ if __name__ == "__main__":
     ax = plt.gca()
     # ax.scatter(locs_p[:, 0], locs_p[:, 1], label='GMM Component Means', s=50, color='red', alpha=0.6)  # means
     ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
-    cmap = plt.cm.get_cmap('tab10')
+    cmap = plt.colormaps.get_cmap('tab10')
     for idx, R1 in enumerate(all_grids):
         core_lower_vertices_per_dim = R1.lower_vertices_per_dim
         core_upper_vertices_per_dim = R1.upper_vertices_per_dim
@@ -418,7 +493,7 @@ if __name__ == "__main__":
     ax = plt.gca()
     # ax.scatter(locs_p[:, 0], locs_p[:, 1], label='GMM Component Means', s=50, color='red', alpha=0.6)  # means
     ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
-    cmap = plt.cm.get_cmap('tab10')
+    cmap = plt.colormaps.get_cmap('tab10')
     for idx, R1 in enumerate(all_grids):
         core_lower_vertices_per_dim = R1.lower_vertices_per_dim
         core_upper_vertices_per_dim = R1.upper_vertices_per_dim
@@ -439,6 +514,43 @@ if __name__ == "__main__":
                 )
                 ax.add_patch(rect)
     plt.title(f"Discretization for GMM with heuristic for w2-optimal-shells, W2: {total_w2}")
+    plt.legend()
+    plt.grid(True)
+    plt.axis("equal")
+    plt.show()
+
+    # using clustering
+    # shells, z = identify_dense_regions(gmm)
+    shells, z = dbscan_shells(gmm)
+    grid_locs = use_w2_locations(gmm, shells)
+    probs, locs, w2, grids = quantization_gmm_shells(gmm, shells, z, grid_locs=grid_locs, paddings=[0.01]*len(shells))
+    s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
+    print(f"Total W2 error over all shells: {w2}")
+
+    plt.figure(figsize=(8, 6))
+    ax = plt.gca()
+    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', color='red', alpha=0.6)  # locs
+    cmap = plt.colormaps.get_cmap('tab10')
+    for idx, R1 in enumerate(grids):
+        core_lower_vertices_per_dim = R1.lower_vertices_per_dim
+        core_upper_vertices_per_dim = R1.upper_vertices_per_dim
+        for i in range(len(core_lower_vertices_per_dim[0])):
+            for j in range(len(core_lower_vertices_per_dim[1])):
+                x0 = core_lower_vertices_per_dim[0][i].item()
+                x1 = core_upper_vertices_per_dim[0][i].item()
+                y0 = core_lower_vertices_per_dim[1][j].item()
+                y1 = core_upper_vertices_per_dim[1][j].item()
+                rect = patches.Rectangle(
+                    (x0, y0),
+                    x1 - x0,
+                    y1 - y0,
+                    edgecolor='blue',
+                    facecolor='none',
+                    linewidth=1.5,
+                    linestyle='-'
+                )
+                ax.add_patch(rect)
+    plt.title(f"Discretization for GMM with clustering heuristic, W2: {w2}")
     plt.legend()
     plt.grid(True)
     plt.axis("equal")
@@ -610,7 +722,7 @@ if __name__ == "__main__":
     # ax = plt.gca()
     # # ax.scatter(locs_p[:, 0], locs_p[:, 1], label='GMM Component Means', s=50, color='red', alpha=0.6)  # means
     # ax.scatter(locs_all[:, 0], locs_all[:, 1], label='Locs', color='red', alpha=0.6)  # locs
-    # cmap = plt.cm.get_cmap('tab10')
+    # cmap = plt.colormaps.get_cmap('tab10')
     # for idx, R1 in enumerate(all_R1_grids):
     #     core_lower_vertices_per_dim = R1.lower_vertices_per_dim
     #     core_upper_vertices_per_dim = R1.upper_vertices_per_dim
@@ -695,7 +807,7 @@ if __name__ == "__main__":
     # probs = disc_gmm.probs.detach().numpy()
     # s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
     # print(f"Total W2 error: {disc_gmm.w2.item()}")
-    # cmap = plt.cm.get_cmap('tab10')
+    # cmap = plt.colormaps.get_cmap('tab10')
     #
     # # multiple shells
     # plt.figure(figsize=(8, 6))
