@@ -61,8 +61,9 @@ def quantization_gmm_shells(gmm, shell_inputs, z, resolutions=None, paddings=Non
 
     """
     num_shells = len(shell_inputs)
+    dim = len(shell_inputs[0])
     if resolutions is None:
-        resolutions = [(10, 10)] * num_shells
+        resolutions = [tuple([10] * dim) for _ in range(num_shells)]
     if paddings is None:
         paddings = [0.1] * num_shells
 
@@ -82,8 +83,11 @@ def quantization_gmm_shells(gmm, shell_inputs, z, resolutions=None, paddings=Non
             R1_grid = Grid.shell(shell_input, shape, pad)  # uniform
 
         locs_R1 = R1_grid.get_locs()
-        R1_inner = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)], bounds=shell_input)
-        R1_outer = Grid(locs_per_dim=[z[0].unsqueeze(0), z[1].unsqueeze(0)])
+
+        # z for all dims
+        z_expanded = [z[j].unsqueeze(0) for j in range(dim)]
+        R1_inner = Grid(locs_per_dim=z_expanded, bounds=shell_input)
+        R1_outer = Grid(locs_per_dim=z_expanded)
 
         disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
         disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
@@ -139,6 +143,12 @@ def collapse_into_gaussian(locs, covs, probs):
 
     return mean, cov
 
+def shift_shell(shell, dx=0.2, dy=0.2):
+    return [
+        (shell[0][0] + dx, shell[0][1] + dx),
+        (shell[1][0] + dy, shell[1][1] + dy)
+    ]
+
 def check_overlap(shell1,shell2, tol=1e-4):
     # return not (
     #     shell1[0][1] <= shell2[0][0] or shell1[0][0] >= shell2[0][1] or
@@ -148,12 +158,6 @@ def check_overlap(shell1,shell2, tol=1e-4):
         if float(high1) <= float(low2) + tol or float(low1) >= float(high2) - tol:
             return False
     return True
-
-def shift_shell(shell, dx=0.2, dy=0.2):
-    return [
-        (shell[0][0] + dx, shell[0][1] + dx),
-        (shell[1][0] + dy, shell[1][1] + dy)
-    ]
 
 def clip_locations(locs, shell):
     grid_list = [torch.sort(torch.unique(locs[:, i]))[0] for i in range(locs.shape[1])]
@@ -303,17 +307,15 @@ def dbscan_shells(gmm, eps=None, min_samples=20, eps_percentile=95):
         mask = torch.tensor(labels == label)
         cluster_points = samples[mask]
 
-        # must be dense enough to form shell around it
+        # must be dense enough to form shell around it, negligible complexity as its around O(nd) while
+        # eps estimate already has complexity of O(n^2d)
         if len(cluster_points) < min_samples:
             # there can be very small clusters left in dbscan as EVERYTHING is clustered
             continue
 
         mean = cluster_points.mean(dim=0)
 
-        shell = [
-            (mean[0] - eps, mean[0] + eps),
-            (mean[1] - eps, mean[1] + eps)
-        ]
+        shell = [(m - eps, m + eps) for m in mean]
         shells.append(shell)
 
     z = (probs.unsqueeze(1) * means).sum(dim=0)  # z location stays as average of component means
@@ -349,8 +351,8 @@ def set_grid_locations(gmm, shells, num_locs=100):
 
 
 if __name__ == "__main__":
-    num_dims = 2  # need to generalize for higher dims later
-    num_mix_elems = 3
+    num_dims = 2
+    num_mix_elems = 4
     batch_size = torch.Size()
     torch.manual_seed(1)
 
@@ -389,7 +391,7 @@ if __name__ == "__main__":
     # grid_gmm = locs_gmm.detach().numpy()  # grid for gmm
     print(f'W2 error original Signature operation: {disc_gmm.w2}')
     # print(f'Number of signature locations: {len(locs_gmm)}')
-
+    #
     # scaling to compare prob mass across grid and signature
     s_gmm = (probs_gmm - probs_gmm.min()) / (probs_gmm.max() - probs_gmm.min()) * 100
     plt.figure(figsize=(8, 6))
