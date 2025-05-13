@@ -13,6 +13,7 @@ from scipy.spatial import KDTree
 import GMMWas
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
+from kneed import KneeLocator
 
 def shelling(gmm, grid_type="w2-gaussian-optimal", threshold=2, num_locs=10):
     """
@@ -262,38 +263,45 @@ def generate_non_overlapping_shells(gmm, threshold=2, grid_type="w2-gaussian-opt
     else:
         return shells, grid_locations_per_shell, z
 
-def estimate_eps(samples, min_samples=20, percentile=95, plot=False):
+def estimate_eps(samples, min_samples=20, plot=False):
     samples_np = samples.detach().numpy()
     nbrs = NearestNeighbors(n_neighbors=min_samples).fit(samples_np)
     distances, _ = nbrs.kneighbors(samples_np)
     k_distances = distances[:, -1]
-    k_distances = np.sort(k_distances)
-    eps = np.percentile(k_distances, percentile)
+    k_distances = np.sort(k_distances)  # sorted in increasing order based on distance
+    # x = np.arange(len(k_distances))
+    # kl = KneeLocator(x, k_distances, curve='convex', direction='increasing')
+    # eps = k_distances[kl.knee]
+    eps = np.percentile(k_distances, 95)
     if plot:
         import matplotlib.pyplot as plt
         plt.plot(k_distances[::-1])
-        plt.axhline(y=eps, color='r', linestyle='--', label=f'eps = {eps:.4f}')
-        plt.title(f"k-distance plot (min_samples={min_samples})")
+        plt.axhline(y=eps, color='r', linestyle='--', label=f'$\epsilon$ = {eps:.4f}')
+        # plt.title(f"k-distance plot (min_samples={min_samples})")
         plt.xlabel("Sorted index")
         plt.ylabel("k-distance")
         plt.legend()
         plt.grid(True)
+        plt.savefig('figures/DBSCAN_epsilon.svg')
         plt.show()
 
     return eps
 
-def dbscan_shells(gmm, eps=None, min_samples=20, eps_percentile=95):
+def dbscan_shells(gmm, eps=None, min_samples=20):
     # assuming knowledge about gmm to set eps and min_samples
     # gmm stats for z location
     means = gmm.component_distribution.loc
     probs = gmm.mixture_distribution.probs
+    # rule of thumb for min_samples
+    # dim = len(means[-1])
+    # min_samples = dim + 1
 
     num_components = gmm.component_distribution.batch_shape[0]
     num_samples = torch.tensor([100*num_components])
     samples = gmm.sample((num_samples,))
 
     if eps is None:  # elbow method for eps
-        eps = estimate_eps(samples, min_samples=min_samples, percentile=eps_percentile, plot=True)
+        eps = estimate_eps(samples, min_samples=min_samples, plot=True)
 
     X = samples.detach().numpy()
     clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
