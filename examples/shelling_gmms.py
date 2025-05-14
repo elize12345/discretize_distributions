@@ -64,7 +64,8 @@ def quantization_gmm_shells(gmm, shell_inputs, z, resolutions=None, paddings=Non
     num_shells = len(shell_inputs)
     dim = len(shell_inputs[0])
     if resolutions is None:
-        resolutions = [tuple([round((100)**(1/dim))] * dim) for _ in range(num_shells)]
+        resolutions = [tuple([round((100)**(1/dim))] * dim) for _ in range(num_shells)]  # possibly change ?
+        print(f'{round((100)**(1/dim))}')
     if paddings is None:
         paddings = [0.1] * num_shells
 
@@ -297,7 +298,8 @@ def dbscan_shells(gmm, eps=None, min_samples=20):
     # min_samples = dim + 1
 
     num_components = gmm.component_distribution.batch_shape[0]
-    num_samples = torch.tensor([100*num_components])
+    num_samples = torch.tensor([100*num_components])  # equal to nr of signature locations, ensuring it detects enough
+    # density variations
     samples = gmm.sample((num_samples,))
 
     if eps is None:  # elbow method for eps
@@ -381,15 +383,13 @@ if __name__ == "__main__":
     #                                    [0.0000, 0.05]]])
     # probs = torch.tensor([0.6, 0.2, 0.2, 0.6])
 
-    locs = torch.tensor([[1.4, 1.4], [1.3, 1.3]])
-    covariance_matrix = torch.tensor([[[0.02, 0.0000],
-                                       [0.0000, 0.02]],
-                                      [[0.03, 0.0000],
-                                       [0.0000, 0.06]]])
-    probs = torch.tensor([0.6, 0.2])
+    locs = torch.tensor([[0.0301, -1.372], [-2.9934, 3.0123]])
+    covariance_matrix = torch.tensor([[[0.4094, 0.0], [0.0, 0.3879]], [[0.4078, 0.0], [0.0, 0.9431]]])
+    probs = torch.tensor([0.9693, 0.0307])
+    probs = probs / probs.sum(dim=-1, keepdim=True)
 
     # normalize
-    probs = probs / probs.sum(dim=-1, keepdim=True)
+    # probs = probs / probs.sum(dim=-1, keepdim=True)
 
     gmm = dd.MixtureMultivariateNormal(
         mixture_distribution=torch.distributions.Categorical(probs=probs),
