@@ -20,6 +20,11 @@ for d in mean_distances:
     probs = torch.tensor([0.5, 0.5], dtype=torch.float32)
     cov = torch.eye(2).unsqueeze(0).repeat(2, 1, 1)  # identity for each component
 
+    # locs = torch.tensor([[-d / 2, 0.0], [d / 2, 0.0], [-1 - d / 2, 0.0], [1 + d / 2, 0]], dtype=torch.float32)
+    # probs = torch.tensor([0.5, 0.5, 0.5, 0.5], dtype=torch.float32)
+    # probs = probs / probs.sum(dim=-1, keepdim=True)
+    # cov = torch.eye(2).unsqueeze(0).repeat(4, 1, 1)
+
     test_case = {
         "locs": locs,
         "covariance_matrix": cov,
@@ -57,6 +62,8 @@ for d in mean_distances:
     print(f"Total W2 error over all grids: {shell_w2}")
     print(f"Total number of locations grids: {len(locs_)}")
 
+    sig_eff = sig_w2 / sig_num_locs
+    shell_eff = shell_w2 / shell_num_locs
     # --- metrics ---
     results["d"].append(d)
     results["sig_w2"].append(sig_w2)
@@ -65,6 +72,8 @@ for d in mean_distances:
     results["shell_w2"].append(shell_w2)
     results["shell_num_locs"].append(shell_num_locs)
     results["shell_runtime"].append(shell_runtime)
+    results["sig_eff"].append(sig_eff)
+    results["shell_eff"].append(shell_eff)
 
     file.append({
         "d": d,
@@ -75,6 +84,8 @@ for d in mean_distances:
         "shell_num_locs": shell_num_locs,
         "shell_runtime": shell_runtime,
         "nr of shells": nr_shells,
+        "sig_eff": sig_eff,
+        "shell_eff": shell_eff
     })
 
     plt.figure(figsize=(8, 6))
@@ -150,4 +161,15 @@ plt.title("Trade-off: W2 error vs support size (for 2D GMMs)")
 plt.legend()
 plt.grid(True)
 # plt.savefig(f'Benchmark_tests/2D_GMMs/trade_off.svg')
+plt.show()
+
+plt.figure()
+plt.plot(d_vals, results["sig_eff"], label="Mixture of W2-optimal", marker="o")
+plt.plot(d_vals, results["shell_eff"], label="Mixture of grids", marker="x")
+plt.xlabel("Component distance (d) from means")
+plt.ylabel("W2 error/Size of support")
+# plt.title("Trade-off: W2 error/Size of support vs component distance (for 2D GMMs)")
+plt.legend()
+plt.grid(True)
+plt.savefig(f'Benchmark_tests/2D_GMMs/trade_off_eff.svg')
 plt.show()

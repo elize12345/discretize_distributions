@@ -46,12 +46,13 @@ def shelling(gmm, grid_type="w2-gaussian-optimal", threshold=2, num_locs=10):
         raise ValueError("grid_type must be either 'w2-gaussian-optimal' or 'uniform'")
 
 
-def quantization_gmm_shells(gmm, shell_inputs, z, resolutions=None, paddings=None, grid_locs=None):
+def quantization_gmm_shells(gmm, grids, z, resolutions=None, paddings=None, grid_locs=None):
     """
     Compute the quantization of a GMM for set shell regions
     Args:
         gmm:
-        shell_inputs:
+        grids:
+        z:
         resolutions:
         paddings:
 
@@ -61,13 +62,16 @@ def quantization_gmm_shells(gmm, shell_inputs, z, resolutions=None, paddings=Non
         w2:
 
     """
-    num_shells = len(shell_inputs)
-    dim = len(shell_inputs[0])
-    if resolutions is None:
-        resolutions = [tuple([round((100)**(1/dim))] * dim) for _ in range(num_shells)]  # possibly change ?
+    num_grids = len(grids)
+    dim = len(grids[0])
+    # num_grids = len(shells)
+    # dim = len(shells[0])
+
+    if resolutions is None:  # this needs to be added in grids' generation
+        resolutions = [tuple([round((100)**(1/dim))] * dim) for _ in range(num_grids)]  # possibly change ?
         print(f'{round((100)**(1/dim))}')
     if paddings is None:
-        paddings = [0.1] * num_shells
+        paddings = [0.1] * num_grids
 
     w2_squared_sum = torch.zeros(1)
     all_locs = []
@@ -75,15 +79,16 @@ def quantization_gmm_shells(gmm, shell_inputs, z, resolutions=None, paddings=Non
     all_R1_grids = []
     all_z_probs = torch.zeros(1)
 
-    for i, shell_input in enumerate(shell_inputs):
-        if grid_locs is not None:
-            grid_locs_per_shell = grid_locs[i]
-            R1_grid = Grid(locs_per_dim=grid_locs_per_shell, bounds=shell_input)  # w2-optimal-approx-gaussian
-        else:
-            shape = resolutions[i]
-            pad = paddings[i]
-            R1_grid = Grid.shell(shell_input, shape, pad)  # uniform
+    for i, grid in enumerate(grids):
+        # if grid_locs is not None:
+        #     grid_locs_per_shell = grid_locs[i]
+        #     R1_grid = Grid(locs_per_dim=grid_locs_per_shell, bounds=shell_input)  # w2-optimal-approx-gaussian
+        # else:
+        #     shape = resolutions[i]
+        #     pad = paddings[i]
+        #     R1_grid = Grid.shell(shell_input, shape, pad)  # uniform
 
+        R1_grid = grid
         locs_R1 = R1_grid.get_locs()
 
         # z for all dims
@@ -288,7 +293,7 @@ def estimate_eps(samples, min_samples=20, plot=False):
 
     return eps
 
-def dbscan_shells(gmm, eps=None, min_samples=20):
+def dbscan_shells(gmm, eps=None, min_samples=None):
     # assuming knowledge about gmm to set eps and min_samples
     # gmm stats for z location
     means = gmm.component_distribution.loc
@@ -302,8 +307,10 @@ def dbscan_shells(gmm, eps=None, min_samples=20):
     # density variations
     samples = gmm.sample((num_samples,))
 
+    # parameters
     if eps is None:  # elbow method for eps
         eps = estimate_eps(samples, min_samples=min_samples, plot=False)
+    if min_samples is None: min_samples = 20
 
     X = samples.detach().numpy()
     clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
@@ -335,6 +342,7 @@ def dbscan_shells(gmm, eps=None, min_samples=20):
         return shells, z
     else:
         final_shells = []
+        # merge shells if they overlap
         for shell in shells:
             if all(not check_overlap(shell, existing) for existing in final_shells):
                 final_shells.append(shell)
