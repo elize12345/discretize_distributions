@@ -303,7 +303,7 @@ def dbscan_shells(gmm, eps=None, min_samples=20):
     samples = gmm.sample((num_samples,))
 
     if eps is None:  # elbow method for eps
-        eps = estimate_eps(samples, min_samples=min_samples, plot=True)
+        eps = estimate_eps(samples, min_samples=min_samples, plot=False)
 
     X = samples.detach().numpy()
     clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
