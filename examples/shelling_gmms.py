@@ -15,6 +15,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
 from kneed import KneeLocator
 
+# archive
 def shelling(gmm, grid_type="w2-gaussian-optimal", threshold=2, num_locs=10):
     """
     Combined logic
@@ -44,135 +45,6 @@ def shelling(gmm, grid_type="w2-gaussian-optimal", threshold=2, num_locs=10):
                                        grid_locs=None)  # default grid settings
     else:
         raise ValueError("grid_type must be either 'w2-gaussian-optimal' or 'uniform'")
-
-
-def quantization_gmm_shells(gmm, grids, z, resolutions=None, paddings=None, grid_locs=None):
-    """
-    Compute the quantization of a GMM for set shell regions
-    Args:
-        gmm:
-        grids:
-        z:
-        resolutions:
-        paddings:
-
-    Returns:
-        locs:
-        probs:
-        w2:
-
-    """
-    num_grids = len(grids)
-    dim = len(grids[0])
-    # num_grids = len(shells)
-    # dim = len(shells[0])
-
-    if resolutions is None:  # this needs to be added in grids' generation
-        resolutions = [tuple([round((100)**(1/dim))] * dim) for _ in range(num_grids)]  # possibly change ?
-        print(f'{round((100)**(1/dim))}')
-    if paddings is None:
-        paddings = [0.1] * num_grids
-
-    w2_squared_sum = torch.zeros(1)
-    all_locs = []
-    all_probs = []
-    all_R1_grids = []
-    all_z_probs = torch.zeros(1)
-
-    for i, grid in enumerate(grids):
-        # if grid_locs is not None:
-        #     grid_locs_per_shell = grid_locs[i]
-        #     R1_grid = Grid(locs_per_dim=grid_locs_per_shell, bounds=shell_input)  # w2-optimal-approx-gaussian
-        # else:
-        #     shape = resolutions[i]
-        #     pad = paddings[i]
-        #     R1_grid = Grid.shell(shell_input, shape, pad)  # uniform
-
-        R1_grid = grid
-        locs_R1 = R1_grid.get_locs()
-
-        # z for all dims
-        z_expanded = [z[j].unsqueeze(0) for j in range(dim)]
-        R1_inner = Grid(locs_per_dim=z_expanded, bounds=shell_input)
-        R1_outer = Grid(locs_per_dim=z_expanded)
-
-        disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
-        disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
-        disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
-
-        w2_R1 = disc_R1.w2
-        w2_R1_inner = disc_R1_inner.w2
-        w2_R1_outer = disc_R1_outer.w2
-
-        # w2_shell = w2_R1 + (w2_R1_outer - w2_R1_inner)
-        # total_w2 += w2_shell
-        w2_squared_sum += (w2_R1.pow(2) + (w2_R1_outer.pow(2) - w2_R1_inner.pow(2)))
-
-        # print(f"Shell bounds: {shell_input}")
-        # print(f"  - W2 error: {w2_shell}")
-
-        z_probs_R1 = disc_R1.z_probs
-        probs_R1 = disc_R1.probs
-        # print(f'Prob mass of z: {z_probs_R1.item()}')
-        # print(f'Prob mass of grid: {probs_R1.sum()}')
-
-        # normalize wrt z mass
-        z_mass = z_probs_R1.item()
-        mass_scale = (1 - z_mass)
-        probs_R1 = probs_R1 * mass_scale
-        # print(f'Prob mass of grid normalized by sum of grid and z: {probs_R1.sum().item()}')
-
-        all_locs.append(locs_R1)
-        all_probs.append(probs_R1)
-        all_z_probs += z_probs_R1
-        all_R1_grids.append(R1_grid)
-
-    all_locs = torch.cat(all_locs, dim=0)
-    all_probs = torch.cat(all_probs, dim=0)
-    locs_all = torch.cat([all_locs, z.unsqueeze(0)], dim=0)
-    probs_all = torch.cat([all_probs, all_z_probs], dim=0)
-
-    probs_all = probs_all / probs_all.sum(dim=-1, keepdim=True)
-    total_w2 = w2_squared_sum.sqrt().item()
-    print(f'Total W2 error: {total_w2}')
-
-    return probs_all, locs_all, total_w2, all_R1_grids
-
-
-def collapse_into_gaussian(locs, covs, probs):
-    weights = probs / probs.sum()
-    mean = (weights.unsqueeze(1) * locs).sum(dim=0)
-
-    cov = torch.zeros_like(covs[0])
-    for i in range(len(probs)):
-        diff = (locs[i] - mean).unsqueeze(0)
-        cov += weights[i] * (covs[i] + diff.T @ diff)
-
-    return mean, cov
-
-def shift_shell(shell, dx=0.2, dy=0.2):
-    return [
-        (shell[0][0] + dx, shell[0][1] + dx),
-        (shell[1][0] + dy, shell[1][1] + dy)
-    ]
-
-def check_overlap(shell1,shell2, tol=1e-4):
-    # return not (
-    #     shell1[0][1] <= shell2[0][0] or shell1[0][0] >= shell2[0][1] or
-    #     shell1[1][1] <= shell2[1][0] or shell1[1][0] >= shell2[1][1]
-    # )
-    for (low1, high1), (low2, high2) in zip(shell1, shell2):
-        if float(high1) <= float(low2) + tol or float(low1) >= float(high2) - tol:
-            return False
-    return True
-
-def clip_locations(locs, shell):
-    grid_list = [torch.sort(torch.unique(locs[:, i]))[0] for i in range(locs.shape[1])]
-    grid_list_clipped = []
-    for i, (dim_grid, (lower, upper)) in enumerate(zip(grid_list, shell)):
-        in_bounds = (dim_grid >= lower) & (dim_grid <= upper)
-        grid_list_clipped.append(dim_grid[in_bounds])
-    return grid_list_clipped
 
 
 def generate_non_overlapping_shells(gmm, threshold=2, grid_type="w2-gaussian-optimal", num_locs=10):
@@ -269,6 +141,119 @@ def generate_non_overlapping_shells(gmm, threshold=2, grid_type="w2-gaussian-opt
     else:
         return shells, grid_locations_per_shell, z
 
+
+def quantization_gmm_shells(gmm, grids, z, resolutions=None, paddings=None, grid_locs=None):
+    """
+    Compute the quantization of a GMM for set shell regions
+    Args:
+        gmm:
+        grids:
+        z:
+        resolutions:
+        paddings:
+
+    Returns:
+        locs:
+        probs:
+        w2:
+
+    """
+    num_grids = len(grids)
+    dim = len(grids[0])
+    # num_grids = len(shells)
+    # dim = len(shells[0])
+
+    if resolutions is None:  # this needs to be added in grids' generation
+        resolutions = [tuple([round((100)**(1/dim))] * dim) for _ in range(num_grids)]  # possibly change ?
+        print(f'{round((100)**(1/dim))}')
+    if paddings is None:
+        paddings = [0.1] * num_grids
+
+    w2_squared_sum = torch.zeros(1)
+    all_locs = []
+    all_probs = []
+    all_R1_grids = []
+    all_z_probs = torch.zeros(1)
+
+    for i, grid in enumerate(grids):
+        # if grid_locs is not None:
+        #     grid_locs_per_shell = grid_locs[i]
+        #     R1_grid = Grid(locs_per_dim=grid_locs_per_shell, bounds=shell_input)  # w2-optimal-approx-gaussian
+        # else:
+        #     shape = resolutions[i]
+        #     pad = paddings[i]
+        #     R1_grid = Grid.shell(shell_input, shape, pad)  # uniform
+
+        R1_grid = grid
+        locs_R1 = R1_grid.get_locs()
+
+        # z for all dims
+        z_expanded = [z[j].unsqueeze(0) for j in range(dim)]
+        R1_inner = Grid(locs_per_dim=z_expanded, bounds=shell_input)
+        R1_outer = Grid(locs_per_dim=z_expanded)
+
+        disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
+        disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
+        disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
+
+        w2_R1 = disc_R1.w2
+        w2_R1_inner = disc_R1_inner.w2
+        w2_R1_outer = disc_R1_outer.w2
+
+        # w2_shell = w2_R1 + (w2_R1_outer - w2_R1_inner)
+        # total_w2 += w2_shell
+        w2_squared_sum += (w2_R1.pow(2) + (w2_R1_outer.pow(2) - w2_R1_inner.pow(2)))
+
+        # print(f"Shell bounds: {shell_input}")
+        # print(f"  - W2 error: {w2_shell}")
+
+        z_probs_R1 = disc_R1.z_probs
+        probs_R1 = disc_R1.probs
+        # print(f'Prob mass of z: {z_probs_R1.item()}')
+        # print(f'Prob mass of grid: {probs_R1.sum()}')
+
+        # normalize wrt z mass
+        z_mass = z_probs_R1.item()
+        mass_scale = (1 - z_mass)
+        probs_R1 = probs_R1 * mass_scale
+        # print(f'Prob mass of grid normalized by sum of grid and z: {probs_R1.sum().item()}')
+
+        all_locs.append(locs_R1)
+        all_probs.append(probs_R1)
+        all_z_probs += z_probs_R1
+        all_R1_grids.append(R1_grid)
+
+    all_locs = torch.cat(all_locs, dim=0)
+    all_probs = torch.cat(all_probs, dim=0)
+    locs_all = torch.cat([all_locs, z.unsqueeze(0)], dim=0)
+    probs_all = torch.cat([all_probs, all_z_probs], dim=0)
+
+    probs_all = probs_all / probs_all.sum(dim=-1, keepdim=True)
+    total_w2 = w2_squared_sum.sqrt().item()
+    print(f'Total W2 error: {total_w2}')
+
+    return probs_all, locs_all, total_w2, all_R1_grids
+
+def shift_shell(shell, dx=0.2, dy=0.2):
+    return [
+        (shell[0][0] + dx, shell[0][1] + dx),
+        (shell[1][0] + dy, shell[1][1] + dy)
+    ]
+
+def check_overlap(shell1,shell2, tol=1e-4):
+    for (low1, high1), (low2, high2) in zip(shell1, shell2):
+        if float(high1) <= float(low2) + tol or float(low1) >= float(high2) - tol:
+            return False
+    return True
+
+def clip_locations(locs, shell):
+    grid_list = [torch.sort(torch.unique(locs[:, i]))[0] for i in range(locs.shape[1])]
+    grid_list_clipped = []
+    for i, (dim_grid, (lower, upper)) in enumerate(zip(grid_list, shell)):
+        in_bounds = (dim_grid >= lower) & (dim_grid <= upper)
+        grid_list_clipped.append(dim_grid[in_bounds])
+    return grid_list_clipped
+
 def estimate_eps(samples, min_samples=20, plot=False):
     samples_np = samples.detach().numpy()
     nbrs = NearestNeighbors(n_neighbors=min_samples).fit(samples_np)
@@ -295,9 +280,6 @@ def estimate_eps(samples, min_samples=20, plot=False):
 
 def dbscan_shells(gmm, eps=None, min_samples=None):
     # assuming knowledge about gmm to set eps and min_samples
-    # gmm stats for z location
-    means = gmm.component_distribution.loc
-    probs = gmm.mixture_distribution.probs
     # rule of thumb for min_samples
     # dim = len(means[-1])
     # min_samples = dim + 1
@@ -310,13 +292,15 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
     # parameters
     if eps is None:  # elbow method for eps
         eps = estimate_eps(samples, min_samples=min_samples, plot=False)
-    if min_samples is None: min_samples = 20
+    if min_samples is None:
+        min_samples = 20
 
     X = samples.detach().numpy()
     clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
     labels = clustering.labels_
 
     shells = []
+    centers = []
     unique_labels = set(labels)
     unique_labels.discard(-1)  # dbscan identifies noise, so we can discard it here
 
@@ -330,10 +314,17 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
             # there can be very small clusters left in dbscan as EVERYTHING is clustered
             continue
 
-        mean = cluster_points.mean(dim=0)
+        center = cluster_points.mean(dim=0)
 
-        shell = [(m - eps, m + eps) for m in mean]
+        shell = [(m - eps, m + eps) for m in center]
+
+        centers.append(center)
         shells.append(shell)
+
+    # gmm stats for z location
+    means = gmm.component_distribution.loc
+    probs = gmm.mixture_distribution.probs
+    covs = gmm.mixture_distribution.covariance_matrix
 
     z = (probs.unsqueeze(1) * means).sum(dim=0)  # z location stays as average of component means
 
@@ -343,16 +334,58 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
     else:
         final_shells = []
         # merge shells if they overlap
-        for shell in shells:
-            if all(not check_overlap(shell, existing) for existing in final_shells):
-                final_shells.append(shell)
-            else:
-                print(f'Shells overlap! Change parameters eps and min_samples.')
-
+        for shell, center in zip(shells, centers):
+            merged = False
+            for i, (existing_shell, existing_center) in enumerate(final_shells):
+                if check_overlap(shell, existing_shell):
+                    # merge based on centers
+                    new_center = (center + existing_center) / 2
+                    new_shell = [(c - eps, c + eps) for c in new_center]  # same structure as before
+                    final_shells[i] = (new_shell, new_center)
+                    print("Shells overlap! Merged into one.")
+                    merged = True
+                    break
+            if not merged:
+                final_shells.append((shell, center))
         if len(final_shells) == 0:
             print(f'No shells found! Increase eps and/or lower min_samples required in cluster.')
     # increase region of eps so more points included or lower amount of points needed in a cluster
-        return final_shells, z
+
+    # grouping components by location of mean wrt center of shells (clusters)
+    groups = group_means_by_shells(means, centers, eps)
+    for i, group_indices in enumerate(groups):  # groups[i] is list  of GMM means assigined to centers[i]
+        if not group_indices:
+            continue
+        shell, center = final_shells[i]  # corresponding shell and center
+        group_locs = means[group_indices]
+        group_covs = covs[group_indices]
+        group_probs = probs[group_indices]
+
+        mean, cov = collapse_into_gaussian(group_locs, group_covs, group_probs)
+        # get optimal grid using mean and cov and shell and store grid
+
+    return final_shells, z
+
+
+def collapse_into_gaussian(locs, covs, probs):
+    weights = probs / probs.sum()
+    mean = (weights.unsqueeze(1) * locs).sum(dim=0)
+
+    cov = torch.zeros_like(covs[0])
+    for i in range(len(probs)):
+        diff = (locs[i] - mean).unsqueeze(0)
+        cov += weights[i] * (covs[i] + diff.T @ diff)
+
+    return mean, cov
+
+
+def merge_shell(shell1, shell2):
+    new_shell = []
+    for (low1, high1), (low2, high2) in zip(shell1, shell2):
+        low = min(low1, low2)
+        high = max(high1, high2)
+        new_shell.append((low, high))
+    return new_shell
 
 def set_grid_locations(gmm, shells, num_locs=100):
     disc = dd.discretization_generator(gmm, num_locs)
@@ -366,6 +399,32 @@ def set_grid_locations(gmm, shells, num_locs=100):
         grid_locations_per_shell.append(grid_list_clipped)
 
     return grid_locations_per_shell
+
+def group_means_by_shells(means, centers, eps):
+    visited = set()
+    shell_groups = [[] for _ in centers]
+
+    for j, mean in enumerate(means):
+        if j in visited:
+            continue
+
+        closed_shell_index = None
+        best_distance = float('inf')  # start at max distance
+
+        for i, center in enumerate(centers):
+            if torch.all(torch.abs(mean - center) < 2 * eps):
+                distance = torch.norm(mean - center)
+                if distance < best_distance:
+                    best_distance = distance
+                    closed_shell_index = i
+
+        if closed_shell_index is not None:
+            shell_groups[closed_shell_index].append(mean)
+            visited.add(j)
+
+    return shell_groups
+
+
 
 
 if __name__ == "__main__":
