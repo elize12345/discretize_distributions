@@ -290,10 +290,10 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
     samples = gmm.sample((num_samples,))
 
     # parameters
-    if eps is None:  # elbow method for eps
-        eps = estimate_eps(samples, min_samples=min_samples, plot=False)
     if min_samples is None:
         min_samples = 20
+    if eps is None:  # elbow method for eps
+        eps = estimate_eps(samples, min_samples=min_samples, plot=False)
 
     X = samples.detach().numpy()
     clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
@@ -324,7 +324,7 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
     # gmm stats for z location
     means = gmm.component_distribution.loc
     probs = gmm.mixture_distribution.probs
-    covs = gmm.mixture_distribution.covariance_matrix
+    covs = gmm.component_distribution.covariance_matrix
 
     z = (probs.unsqueeze(1) * means).sum(dim=0)  # z location stays as average of component means
 
@@ -363,6 +363,7 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
 
         mean, cov = collapse_into_gaussian(group_locs, group_covs, group_probs)
         # get optimal grid using mean and cov and shell and store grid
+        # clip locations to grid using clipped function
 
     return final_shells, z
 
@@ -374,7 +375,7 @@ def collapse_into_gaussian(locs, covs, probs):
     cov = torch.zeros_like(covs[0])
     for i in range(len(probs)):
         diff = (locs[i] - mean).unsqueeze(0)
-        cov += weights[i] * (covs[i] + diff.T @ diff)
+        cov += weights[i] * (covs[i] + diff.T @ diff)  # can produce non-diagonal parts! what to do here??
 
     return mean, cov
 

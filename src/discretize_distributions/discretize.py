@@ -12,7 +12,7 @@ from discretize_distributions.grid import Grid
 import discretize_distributions.tensors as tensors
 
 GRID_CONFIGS = utils.pickle_load(pkg_resources.resource_filename(__name__,
-                                                                 f'data{os.sep}lookup_grid_config.pickle'))
+                                                                 f'data{os.sep}lookup_grid_config_NEW.pickle'))
 OPTIMAL_1D_GRIDS = utils.pickle_load(pkg_resources.resource_filename(__name__,
                                                                      f'data{os.sep}lookup_opt_grid_uni_stand_normal.pickle'))
 
@@ -136,6 +136,7 @@ def optimal_discretize_multi_norm_dist(
 
     return locs, probs, w2
 
+# not needed anymore
 def w2_multi_norm_dist_for_set_locations(norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
                        signature_locs: torch.Tensor) -> torch.Tensor:
     # mean = norm.mean  # [dim]
