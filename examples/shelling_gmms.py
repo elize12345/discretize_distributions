@@ -159,7 +159,8 @@ def quantization_gmm_shells(gmm, grids, z, resolutions=None, paddings=None, grid
 
     """
     num_grids = len(grids)
-    dim = len(grids[0])
+    dim = z.shape[0]
+    print(f'dim {dim}')
     # num_grids = len(shells)
     # dim = len(shells[0])
 
@@ -327,10 +328,21 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
     covs = gmm.component_distribution.covariance_matrix
 
     z = (probs.unsqueeze(1) * means).sum(dim=0)  # z location stays as average of component means
+    grids = []
 
-    # return shells, z
+    # return grids, z
     if len(shells) == 1:
-        return shells, z
+        shell = shells[0]  # only one
+        mean, cov = collapse_into_gaussian(means, covs, probs)
+        # get optimal grid using mean and cov and shell and store grid
+        # clip locations to grid using clipped function
+        norm = dd.MultivariateNormal(mean, cov)
+        disc = dd.discretization_generator(norm, num_locs=100)
+        locs_ = disc.locs
+        grid_list = clip_locations(locs_, shell)
+        grid = Grid(locs_per_dim=grid_list, bounds=shell)
+        grids.append(grid)
+        return grids, z
     else:
         final_shells = []
         # merge shells if they overlap
@@ -349,23 +361,29 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
                 final_shells.append((shell, center))
         if len(final_shells) == 0:
             print(f'No shells found! Increase eps and/or lower min_samples required in cluster.')
-    # increase region of eps so more points included or lower amount of points needed in a cluster
+        # increase region of eps so more points included or lower amount of points needed in a cluster
 
-    # grouping components by location of mean wrt center of shells (clusters)
-    groups = group_means_by_shells(means, centers, eps)
-    for i, group_indices in enumerate(groups):  # groups[i] is list  of GMM means assigined to centers[i]
-        if not group_indices:
-            continue
-        shell, center = final_shells[i]  # corresponding shell and center
-        group_locs = means[group_indices]
-        group_covs = covs[group_indices]
-        group_probs = probs[group_indices]
+        # grouping components by location of mean wrt center of shells (clusters)
+        groups = group_means_by_shells(means, centers, eps)
+        for i, group_indices in enumerate(groups):  # groups[i] is list  of GMM means assigined to centers[i]
+            if not group_indices:
+                continue
+            shell, center = final_shells[i]  # corresponding shell and center
+            group_locs = means[group_indices]
+            group_covs = covs[group_indices]
+            group_probs = probs[group_indices]
 
-        mean, cov = collapse_into_gaussian(group_locs, group_covs, group_probs)
-        # get optimal grid using mean and cov and shell and store grid
-        # clip locations to grid using clipped function
+            mean, cov = collapse_into_gaussian(group_locs, group_covs, group_probs)
+            # get optimal grid using mean and cov and shell and store grid
+            # clip locations to grid using clipped function
+            norm = dd.MultivariateNormal(mean, cov)
+            disc = dd.discretization_generator(norm, num_locs=10)
+            locs_ = disc.locs
+            grid_list = clip_locations(locs_, shell)
+            grid = Grid(locs_per_dim=grid_list, bounds=shell)
+            grids.append(grid)
 
-    return final_shells, z
+    return grids, z
 
 
 def collapse_into_gaussian(locs, covs, probs):
@@ -420,17 +438,15 @@ def group_means_by_shells(means, centers, eps):
                     closed_shell_index = i
 
         if closed_shell_index is not None:
-            shell_groups[closed_shell_index].append(mean)
+            shell_groups[closed_shell_index].append(j)
             visited.add(j)
 
     return shell_groups
 
 
-
-
 if __name__ == "__main__":
     num_dims = 2
-    num_mix_elems = 2
+    num_mix_elems = 3
     batch_size = torch.Size()
     torch.manual_seed(1)
 
@@ -440,24 +456,19 @@ if __name__ == "__main__":
     # locs = torch.randn(batch_size + (num_mix_elems, num_dims,))
     # probs = torch.rand(batch_size + (num_mix_elems,))
 
-    # locs = torch.tensor([[0.3, 0.3], [0.4, 0.4], [1.4, 1.4], [1.3, 1.3]])
-    # covariance_matrix = torch.tensor([[[0.02, 0.0000],
-    #                                    [0.0000, 0.02]],
-    #                                   [[0.03, 0.0000],
-    #                                    [0.0000, 0.06]],
-    #                                   [[0.02, 0.0000],
-    #                                    [0.0000, 0.02]],
-    #                                   [[0.05, 0.0000],
-    #                                    [0.0000, 0.05]]])
-    # probs = torch.tensor([0.6, 0.2, 0.2, 0.6])
-
-    locs = torch.tensor([[0.0301, -1.372], [-2.9934, 3.0123]])
-    covariance_matrix = torch.tensor([[[0.4094, 0.0], [0.0, 0.3879]], [[0.4078, 0.0], [0.0, 0.9431]]])
-    probs = torch.tensor([0.9693, 0.0307])
-    probs = probs / probs.sum(dim=-1, keepdim=True)
+    locs = torch.tensor([[0.3, 0.3], [0.4, 0.4], [1.4, 1.4], [1.3, 1.3]])
+    covariance_matrix = torch.tensor([[[0.02, 0.0000],
+                                       [0.0000, 0.02]],
+                                      [[0.03, 0.0000],
+                                       [0.0000, 0.06]],
+                                      [[0.02, 0.0000],
+                                       [0.0000, 0.02]],
+                                      [[0.05, 0.0000],
+                                       [0.0000, 0.05]]])
+    probs = torch.tensor([0.6, 0.2, 0.2, 0.6])
 
     # normalize
-    # probs = probs / probs.sum(dim=-1, keepdim=True)
+    probs = probs / probs.sum(dim=-1, keepdim=True)
 
     gmm = dd.MixtureMultivariateNormal(
         mixture_distribution=torch.distributions.Categorical(probs=probs),
@@ -560,9 +571,8 @@ if __name__ == "__main__":
     plt.show()
 
     # using clustering
-    shells, z = dbscan_shells(gmm)
-    grid_locs = set_grid_locations(gmm, shells)
-    probs, locs, w2, grids = quantization_gmm_shells(gmm, shells, z, paddings=[0.01]*len(shells))
+    grids, z = dbscan_shells(gmm)
+    probs, locs, w2, grids = quantization_gmm_shells(gmm, grids, z)
     s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
     print(f"Total W2 error over all shells: {w2}")
     print(f"Total number of locations: {len(locs)}")
@@ -600,7 +610,7 @@ if __name__ == "__main__":
 
     plt.figure(figsize=(8, 6))
     ax = plt.gca()
-    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)  # locs
+    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', color='red', alpha=0.6)  # locs
     cmap = plt.colormaps.get_cmap('tab10')
     for idx, R1 in enumerate(grids):
         core_lower_vertices_per_dim = R1.lower_vertices_per_dim
