@@ -6,7 +6,7 @@ from discretize_distributions.grid import Grid
 from matplotlib import pyplot as plt, patches, cm
 from scipy.spatial import Voronoi, voronoi_plot_2d
 from discretize_distributions.distributions import DiscretizedMixtureMultivariateNormal, \
-    DiscretizedMixtureMultivariateNormalQuantization, DiscretizedMixtureMultivariateNormalQuantizationShell
+    DiscretizedMixtureMultivariateNormalQuantization
 import GMMWas
 import numpy as np
 from scipy.spatial import KDTree
@@ -149,8 +149,6 @@ def quantization_gmm_shells(gmm, grids, shells, z):
         gmm:
         grids:
         z:
-        resolutions:
-        paddings:
 
     Returns:
         locs:
@@ -171,7 +169,7 @@ def quantization_gmm_shells(gmm, grids, shells, z):
         R1_grid = grid
         locs_R1 = R1_grid.get_locs()
 
-        disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
+        disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid, z_mass=None)
         z_probs_R1 = disc_R1.z_probs  # mass outside of grid
         probs_R1 = disc_R1.probs
         # print(f'Prob mass of z: {z_probs_R1.item()}')
@@ -330,7 +328,7 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
         # get optimal grid using mean and cov and shell and store grid
         # clip locations to grid using clipped function
         norm = dd.MultivariateNormal(mean, cov)
-        disc = dd.discretization_generator(norm, num_locs=100)
+        disc = dd.discretization_generator(norm, num_locs=200)
         locs_ = disc.locs
         grid_list = clip_locations(locs_, shell)
         grid = Grid(locs_per_dim=grid_list, bounds=shell)
@@ -384,11 +382,14 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
 
 
 def collapse_into_gaussian(locs, covs, probs):
+    assert locs.shape[0] == covs.shape[0] == probs.shape[0], "Mismatched number of components"
     weights = probs / probs.sum()
     mean = (weights.unsqueeze(1) * locs).sum(dim=0)
 
-    cov = torch.zeros_like(covs[0])
-    for i in range(len(probs)):
+    D = locs.shape[1]
+    cov = torch.zeros(D, D, device=locs.device, dtype=locs.dtype)
+
+    for i in range(locs.shape[0]):
         diff = (locs[i] - mean).unsqueeze(0)
         cov += weights[i] * (covs[i] + diff.T @ diff)  # can produce non-diagonal parts! what to do here??
 
@@ -443,7 +444,7 @@ def group_means_by_shells(means, centers, eps):
 
 if __name__ == "__main__":
     num_dims = 2
-    num_mix_elems = 3
+    num_mix_elems = 4
     batch_size = torch.Size()
     torch.manual_seed(1)
 
@@ -453,28 +454,6 @@ if __name__ == "__main__":
     # locs = torch.randn(batch_size + (num_mix_elems, num_dims,))
     # probs = torch.rand(batch_size + (num_mix_elems,))
 
-    # locs = torch.tensor([[0.3, 0.3], [0.4, 0.4], [1.4, 1.4], [1.3, 1.3]])
-    # covariance_matrix = torch.tensor([[[0.02, 0.0000],
-    #                                    [0.0000, 0.02]],
-    #                                   [[0.03, 0.0000],
-    #                                    [0.0000, 0.06]],
-    #                                   [[0.02, 0.0000],
-    #                                    [0.0000, 0.02]],
-    #                                   [[0.05, 0.0000],
-    #                                    [0.0000, 0.05]]])
-    # probs = torch.tensor([0.6, 0.2, 0.2, 0.6])
-
-    # locs = torch.tensor([[0.3, 0.3], [0.3, 0.3], [1.4, 1.4], [1.4, 1.4]])
-    # covariance_matrix = torch.tensor([[[0.02, 0.0000],
-    #                                    [0.0000, 0.02]],
-    #                                   [[0.02, 0.0000],
-    #                                    [0.0000, 0.02]],
-    #                                   [[0.02, 0.0000],
-    #                                    [0.0000, 0.02]],
-    #                                   [[0.02, 0.0000],
-    #                                    [0.0000, 0.02]]])
-    # probs = torch.tensor([0.6, 0.6, 0.6, 0.6])
-
     locs = torch.tensor([[0.3, 0.3], [0.3, 0.3]])
     covariance_matrix = torch.tensor([[[0.02, 0.0000],
                                        [0.0000, 0.02]],
@@ -482,21 +461,32 @@ if __name__ == "__main__":
                                        [0.0000, 0.02]]])
     probs = torch.tensor([0.6, 0.6])
 
+    # locs = torch.tensor([[0.4, 0.4], [0.3, 0.3], [1.3, 1.3], [1.4, 1.4]])
+    # covariance_matrix = torch.tensor([[[0.02, 0.0000],
+    #                                    [0.0000, 0.02]],
+    #                                   [[0.02, 0.0000],
+    #                                    [0.0000, 0.02]],
+    #                                   [[0.03, 0.0000],
+    #                                    [0.0000, 0.03]],
+    #                                   [[0.05, 0.0000],
+    #                                    [0.0000, 0.05]]])
+    # probs = torch.tensor([0.5, 0.4, 0.5, 0.6])
+
     # normalize
     probs = probs / probs.sum(dim=-1, keepdim=True)
-
+    covariance_matrix = covariance_matrix * (1 / (np.sqrt(num_dims)))  # dimension scaling
     gmm = dd.MixtureMultivariateNormal(
         mixture_distribution=torch.distributions.Categorical(probs=probs),
         component_distribution=dd.MultivariateNormal(
             loc=locs,
-            covariance_matrix=covariance_matrix * (1 / (np.sqrt(num_dims)))  # scaling
+            covariance_matrix=covariance_matrix
         )
     )
 
     # original method using signature operator
-    disc_gmm = dd.discretization_generator(gmm, num_locs=100)
+    disc_gmm = dd.discretization_generator(gmm, num_locs=200)
     locs_gmm = disc_gmm.locs
-    probs_gmm = disc_gmm.probs.detach().numpy()
+    probs_gmm = disc_gmm.probs
     # grid_gmm = locs_gmm.detach().numpy()  # grid for gmm
     print(f'W2 error original Signature operation: {disc_gmm.w2}')
     print(f'Number of signature locations: {len(locs_gmm)}')
@@ -504,12 +494,58 @@ if __name__ == "__main__":
     # scaling to compare prob mass across grid and signature
     s_gmm = (probs_gmm - probs_gmm.min()) / (probs_gmm.max() - probs_gmm.min()) * 100
     plt.figure(figsize=(8, 6))
-    plt.scatter(locs_gmm.detach().numpy()[:,0], locs_gmm.detach().numpy()[:,1], s=s_gmm, color='blue', marker='o', alpha=0.6)
+    plt.scatter(locs_gmm[:,0], locs_gmm[:,1], s=s_gmm, color='blue', marker='o', alpha=0.6)
     plt.title(f"Original signature with W2 error {disc_gmm.w2}")
     plt.show()
 
+    # x_min, x_max = locs[:, 0].min(), locs[:, 0].max()
+    # y_min, y_max = locs[:, 1].min(), locs[:, 1].max()
+    # grid = Grid.from_shape((20, 20), torch.Tensor(((x_min, x_max), (y_min, y_max))))  # no bounds on grid
+    #
+    # unbounded grid based on optimal locations
+    mean, cov = collapse_into_gaussian(locs, covariance_matrix, probs)
+    norm = dd.MultivariateNormal(mean, cov)
+    disc = dd.discretization_generator(norm, num_locs=200)
+    locs_ = disc.locs
+    grid_list = [torch.sort(torch.unique(locs_[:, i]))[0] for i in range(locs_.shape[1])]
+    grid = Grid(locs_per_dim=grid_list)
+    disc_grid = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid, z_mass=None)
+    locs_g = disc_grid.locs
+    probs = disc_grid.probs
+    s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
+    print(f"Total W2 error over whole grid: {disc_grid.w2.item()}")
+    print(f"Total number of locations: {len(locs_g)}")
+
+    plt.figure(figsize=(8, 6))
+    ax = plt.gca()
+    ax.scatter(locs_g[:, 0], locs_g[:, 1], label='Locs', color='red', alpha=0.6)  # locs
+    cmap = plt.colormaps.get_cmap('tab10')
+    core_lower_vertices_per_dim = grid.lower_vertices_per_dim
+    core_upper_vertices_per_dim = grid.upper_vertices_per_dim
+    for i in range(len(core_lower_vertices_per_dim[0])):
+        for j in range(len(core_lower_vertices_per_dim[1])):
+            x0 = core_lower_vertices_per_dim[0][i].item()
+            x1 = core_upper_vertices_per_dim[0][i].item()
+            y0 = core_lower_vertices_per_dim[1][j].item()
+            y1 = core_upper_vertices_per_dim[1][j].item()
+            rect = patches.Rectangle(
+                (x0, y0),
+                x1 - x0,
+                y1 - y0,
+                edgecolor='blue',
+                facecolor='none',
+                linewidth=1.5,
+                linestyle='-'
+            )
+            ax.add_patch(rect)
+    plt.title(f"Discretization for GMM with one grid: {disc_grid.w2.item()}")
+    plt.legend()
+    plt.grid(True)
+    plt.axis("equal")
+    plt.show()
+
     # using clustering
-    grids, shells, z = dbscan_shells(gmm, eps=0.5)
+    grids, shells, z = dbscan_shells(gmm, eps=1)
     probs, locs, w2, grids = quantization_gmm_shells(gmm, grids, shells, z)
     s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
     print(f"Total W2 error over all shells: {w2.item()}")
@@ -544,42 +580,18 @@ if __name__ == "__main__":
     plt.axis("equal")
     plt.show()
 
-    grid = Grid.from_shape((20, 20), torch.Tensor(((-0.5, 2.5), (-0.3, 2.0))))  # no bounds on grid
-    disc_grid = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid)
-    locs = disc_grid.locs
-    probs = disc_grid.probs
-    s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
-    print(f"Total W2 error over whole grid: {disc_grid.w2.item()}")
-    print(f"Total number of locations: {len(locs)}")
-
+    # print(torch.sum(torch.abs(probs_gmm - probs)))
+    print(probs.max())
+    print(probs.min())
+    print(probs_gmm.max())
+    print(probs_gmm.min())
     plt.figure(figsize=(8, 6))
-    ax = plt.gca()
-    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', color='red', alpha=0.6)  # locs
-    cmap = plt.colormaps.get_cmap('tab10')
-    core_lower_vertices_per_dim = grid.lower_vertices_per_dim
-    core_upper_vertices_per_dim = grid.upper_vertices_per_dim
-    for i in range(len(core_lower_vertices_per_dim[0])):
-        for j in range(len(core_lower_vertices_per_dim[1])):
-            x0 = core_lower_vertices_per_dim[0][i].item()
-            x1 = core_upper_vertices_per_dim[0][i].item()
-            y0 = core_lower_vertices_per_dim[1][j].item()
-            y1 = core_upper_vertices_per_dim[1][j].item()
-            rect = patches.Rectangle(
-                (x0, y0),
-                x1 - x0,
-                y1 - y0,
-                edgecolor='blue',
-                facecolor='none',
-                linewidth=1.5,
-                linestyle='-'
-            )
-            ax.add_patch(rect)
-    plt.title(f"Discretization for GMM with one grid: {disc_grid.w2.item()}")
-    plt.legend()
-    plt.grid(True)
-    plt.axis("equal")
+    plt.scatter(locs_gmm[:, 0], locs_gmm[:, 1], s=s_gmm, color='blue', marker='o',
+                alpha=0.6)
+    plt.scatter(locs[:, 0], locs[:,1], s=s, color='red', alpha=0.6)
+    # plt.scatter(locs_.detach().numpy()[:, 0], locs_.detach().numpy()[:,1], color='green', alpha=0.6)
+    # plt.scatter(locs_g.detach().numpy()[:, 0], locs_g.detach().numpy()[:,1], color='yellow', alpha=0.6)
     plt.show()
-
     # # applying to whole GMM instead component wise
     # shell_input = [(torch.tensor(-1.0), torch.tensor(1.0)), (torch.tensor(-1.0), torch.tensor(1.0))]
     #

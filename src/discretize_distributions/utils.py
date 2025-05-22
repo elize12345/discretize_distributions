@@ -76,7 +76,7 @@ def calculate_w2_disc_uni_stand_normal(locs: torch.Tensor, lower: Optional[torch
     if z_mass is None:
         z_mass = 1
 
-    probs = (cdf(upper) - cdf(lower)) * z_mass
+    probs = (cdf(upper) - cdf(lower)) * z_mass  # only for outer grids
     trunc_mean, trunc_var = calculate_mean_and_var_trunc_normal(loc=0., scale=1., l=lower, u=upper)
     w2_sq = torch.einsum('i,i->', trunc_var + (trunc_mean - locs).pow(2), probs)
     return w2_sq.sqrt()
