@@ -29,18 +29,19 @@ __all__ = ['discretize_multi_norm_dist']
 def discretize_multi_norm_dist(
         norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
         num_locs: Optional[int] = None,
-        grid: Optional[Grid] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        grid: Optional[Grid] = None,
+        z_mass: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if num_locs is not None:
         return optimal_discretize_multi_norm_dist(norm, num_locs)
     elif grid is not None:
-        return grid_discretize_multi_norm_dist(norm, grid)
+        return grid_discretize_multi_norm_dist(norm, grid, z_mass)
     else:
         raise ValueError('Either num_locs or grid must be provided')
 
 
 def grid_discretize_multi_norm_dist(
         norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],
-        grid: Grid) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        grid: Grid, z_mass: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if not tensors.is_mat_diag(norm.covariance_matrix):
         raise NotImplementedError('Only implemented for diagonal covariance matrices')
     assert norm.batch_shape.numel() == 1, 'batches not yet supported'
@@ -54,19 +55,6 @@ def grid_discretize_multi_norm_dist(
         mean = norm.mean
         std = norm.stddev
 
-    # probability computation, to be simplified:
-    probs_per_dim = [
-        utils.cdf((grid.upper_vertices_per_dim[dim] - mean[dim]) / std[dim]) -
-        utils.cdf((grid.lower_vertices_per_dim[dim] - mean[dim]) / std[dim])
-        for dim in range(grid.dim)
-    ]
-    mesh = torch.meshgrid(*probs_per_dim, indexing='ij')  # cartesian product
-    stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
-    probs = stacked.prod(-1)
-
-    scaled_locs_per_dim = [
-        (grid.locs_per_dim[dim] - mean[dim]) / std[dim]
-        for dim in range(grid.dim)]
     scaled_lower_vertices_per_dim = [
         (lower - mean[dim]) / std[dim]
         for dim, lower in enumerate(grid.lower_vertices_per_dim)]
@@ -75,16 +63,31 @@ def grid_discretize_multi_norm_dist(
         (upper - mean[dim]) / std[dim]
         for dim, upper in enumerate(grid.upper_vertices_per_dim)]
 
+    # probability computation, to be simplified:
+    probs_per_dim = [
+        utils.cdf(scaled_upper_vertices_per_dim[dim]) -
+        utils.cdf(scaled_lower_vertices_per_dim[dim])
+        for dim in range(grid.dim)
+    ]
+
+    mesh = torch.meshgrid(*probs_per_dim, indexing='ij')  # cartesian product
+    stacked = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
+    probs = stacked.prod(-1)
+
+    scaled_locs_per_dim = [
+        (grid.locs_per_dim[dim] - mean[dim]) / std[dim]
+        for dim in range(grid.dim)]
+
     w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(
             dim_locs,
             lower=scaled_lower_vertices_per_dim[dim],
-            upper=scaled_upper_vertices_per_dim[dim]
-        )
+            upper=scaled_upper_vertices_per_dim[dim],
+            z_mass=z_mass)
         for dim, dim_locs in enumerate(scaled_locs_per_dim)]
     # w2_per_dim = [utils.calculate_w2_disc_uni_stand_normal(dim_locs) for dim_locs in scaled_locs_per_dim]
-    w2 = torch.stack(w2_per_dim).pow(2).sum().sqrt()
+    w2_squared = torch.stack(w2_per_dim).pow(2).sum()  # .sqrt()
 
-    return locs, probs, w2
+    return locs, probs, w2_squared
 
 def optimal_discretize_multi_norm_dist(
         norm: Union[MultivariateNormal, torch.distributions.MultivariateNormal],

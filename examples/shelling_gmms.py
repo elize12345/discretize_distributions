@@ -160,27 +160,19 @@ def quantization_gmm_shells(gmm, grids, shells, z):
     """
 
     dim = z.shape[0]
-    w2_squared_sum = torch.zeros(1)
-    total_w2 = torch.zeros(1)
+    tot_probs = torch.zeros(1)
+    w2_shells = torch.zeros(1)
+    w2_outer = torch.zeros(1)
     all_locs = []
     all_probs = []
     all_R1_grids = []
-    all_z_probs = torch.zeros(1)
 
-    for i, grid in enumerate(grids):
+    for i, (grid, shell) in enumerate(zip(grids, shells)):
         R1_grid = grid
         locs_R1 = R1_grid.get_locs()
 
-        # z for all dims
-        z_expanded = [z[j].unsqueeze(0) for j in range(dim)]
-        R1_inner = Grid(locs_per_dim=z_expanded, bounds=shells[i])
-        R1_outer = Grid(locs_per_dim=z_expanded)
-
         disc_R1 = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_grid)
-        disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner)
-        disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer)
-
-        z_probs_R1 = disc_R1.z_probs
+        z_probs_R1 = disc_R1.z_probs  # mass outside of grid
         probs_R1 = disc_R1.probs
         # print(f'Prob mass of z: {z_probs_R1.item()}')
         # print(f'Prob mass of grid: {probs_R1.sum()}')
@@ -188,35 +180,53 @@ def quantization_gmm_shells(gmm, grids, shells, z):
         # normalize wrt z mass
         z_mass = z_probs_R1.item()
         mass_scale = (1 - z_mass)
-        probs_R1 = probs_R1 * mass_scale
-        # print(f'Prob mass of grid normalized by sum of grid and z: {probs_R1.sum().item()}')
+        probs_R1 = probs_R1 * mass_scale  # rescaled probs by z mass
 
+        # calculate z mass
+        tot_probs += probs_R1.sum()
+
+        # w2 calc
         w2_R1 = disc_R1.w2
+
+        w2_shells += w2_R1.pow(2)  # squared and then summed
+
+        all_locs.append(locs_R1)
+        all_probs.append(probs_R1)
+        all_R1_grids.append(R1_grid)
+
+    z_tot_mass = 1 - tot_probs  # total z mass!
+
+    for i, (grid, shell) in enumerate(zip(grids, shells)):
+        # z for all dims
+        z_expanded = [z[j].unsqueeze(0) for j in range(dim)]
+        R1_inner = Grid(locs_per_dim=z_expanded, bounds=shell)
+        R1_outer = Grid(locs_per_dim=z_expanded)
+
+        disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner, z_mass=z_tot_mass)
+        disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer, z_mass=z_tot_mass)
+
         w2_R1_inner = disc_R1_inner.w2
         w2_R1_outer = disc_R1_outer.w2
 
         # w2_shell = w2_R1 + (w2_R1_outer - w2_R1_inner)
         # total_w2 += w2_shell
-        w2_shell = (w2_R1.pow(2) + (w2_R1_outer.pow(2) - w2_R1_inner.pow(2))) * mass_scale  # ???
-        w2_squared_sum += w2_shell
+        w2_R2 = (w2_R1_outer.pow(2) - w2_R1_inner.pow(2))  # squared and subtracted
+        w2_outer += w2_R2  # then summed
+
         # print(f"Shell bounds: {shell_input}")
         # print(f"  - W2 error: {w2_shell}")
-
-        all_locs.append(locs_R1)
-        all_probs.append(probs_R1)
-        all_z_probs += z_probs_R1
-        all_R1_grids.append(R1_grid)
 
     all_locs = torch.cat(all_locs, dim=0)
     all_probs = torch.cat(all_probs, dim=0)
     locs_all = torch.cat([all_locs, z.unsqueeze(0)], dim=0)
-    probs_all = torch.cat([all_probs, all_z_probs], dim=0)
+    probs_all = torch.cat([all_probs, z_tot_mass], dim=0)
 
     probs_all = probs_all / probs_all.sum(dim=-1, keepdim=True)
-    total_w2 = w2_squared_sum.sqrt().item()
-    print(f'Total W2 error: {total_w2}')
+    total_w2 = (w2_shells + w2_outer).sqrt()  # summed and then sqrt()
+    print(f'Total W2 error: {total_w2.item()}')
 
     return probs_all, locs_all, total_w2, all_R1_grids
+
 
 def shift_shell(shell, dx=0.2, dy=0.2):
     return [
@@ -325,7 +335,7 @@ def dbscan_shells(gmm, eps=None, min_samples=None):
         grid_list = clip_locations(locs_, shell)
         grid = Grid(locs_per_dim=grid_list, bounds=shell)
         grids.append(grid)
-        return grids, z
+        return grids, shells, z
     else:
         final_shells = []
         # merge shells if they overlap
@@ -454,16 +464,23 @@ if __name__ == "__main__":
     #                                    [0.0000, 0.05]]])
     # probs = torch.tensor([0.6, 0.2, 0.2, 0.6])
 
-    locs = torch.tensor([[0.3, 0.3], [0.3, 0.3], [1.4, 1.4], [1.4, 1.4]])
+    # locs = torch.tensor([[0.3, 0.3], [0.3, 0.3], [1.4, 1.4], [1.4, 1.4]])
+    # covariance_matrix = torch.tensor([[[0.02, 0.0000],
+    #                                    [0.0000, 0.02]],
+    #                                   [[0.02, 0.0000],
+    #                                    [0.0000, 0.02]],
+    #                                   [[0.02, 0.0000],
+    #                                    [0.0000, 0.02]],
+    #                                   [[0.02, 0.0000],
+    #                                    [0.0000, 0.02]]])
+    # probs = torch.tensor([0.6, 0.6, 0.6, 0.6])
+
+    locs = torch.tensor([[0.3, 0.3], [0.3, 0.3]])
     covariance_matrix = torch.tensor([[[0.02, 0.0000],
                                        [0.0000, 0.02]],
                                       [[0.02, 0.0000],
-                                       [0.0000, 0.02]],
-                                      [[0.02, 0.0000],
-                                       [0.0000, 0.02]],
-                                      [[0.02, 0.0000],
                                        [0.0000, 0.02]]])
-    probs = torch.tensor([0.6, 0.6, 0.6, 0.6])
+    probs = torch.tensor([0.6, 0.6])
 
     # normalize
     probs = probs / probs.sum(dim=-1, keepdim=True)
@@ -495,12 +512,12 @@ if __name__ == "__main__":
     grids, shells, z = dbscan_shells(gmm, eps=0.5)
     probs, locs, w2, grids = quantization_gmm_shells(gmm, grids, shells, z)
     s = (probs - probs.min()) / (probs.max() - probs.min()) * 100
-    print(f"Total W2 error over all shells: {w2}")
+    print(f"Total W2 error over all shells: {w2.item()}")
     print(f"Total number of locations: {len(locs)}")
 
     plt.figure(figsize=(8, 6))
     ax = plt.gca()
-    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)  # locs
+    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', color='red', alpha=0.6)  # locs
     cmap = plt.colormaps.get_cmap('tab10')
     for idx, R1 in enumerate(grids):
         core_lower_vertices_per_dim = R1.lower_vertices_per_dim
@@ -521,7 +538,7 @@ if __name__ == "__main__":
                     linestyle='-'
                 )
                 ax.add_patch(rect)
-    plt.title(f"Discretization for GMM with clustering heuristic, W2: {w2}")
+    plt.title(f"Discretization for GMM with clustering heuristic, W2: {w2.item()}")
     plt.legend()
     plt.grid(True)
     plt.axis("equal")
@@ -537,7 +554,7 @@ if __name__ == "__main__":
 
     plt.figure(figsize=(8, 6))
     ax = plt.gca()
-    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', s=s, color='red', alpha=0.6)  # locs
+    ax.scatter(locs[:, 0], locs[:, 1], label='Locs', color='red', alpha=0.6)  # locs
     cmap = plt.colormaps.get_cmap('tab10')
     core_lower_vertices_per_dim = grid.lower_vertices_per_dim
     core_upper_vertices_per_dim = grid.upper_vertices_per_dim

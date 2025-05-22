@@ -66,14 +66,17 @@ def calculate_mean_and_var_trunc_normal(loc: Union[torch.Tensor, float], scale: 
     return mean, variance
 
 def calculate_w2_disc_uni_stand_normal(locs: torch.Tensor, lower: Optional[torch.Tensor] = None,
-    upper: Optional[torch.Tensor] = None) -> torch.Tensor:
+    upper: Optional[torch.Tensor] = None, z_mass: Optional[torch.Tensor] = None) -> torch.Tensor:
 
     if lower is None or upper is None:
         edges = get_edges(locs)
         lower = edges[:-1]
         upper = edges[1:]
 
-    probs = cdf(upper) - cdf(lower)
+    if z_mass is None:
+        z_mass = 1
+
+    probs = (cdf(upper) - cdf(lower)) * z_mass
     trunc_mean, trunc_var = calculate_mean_and_var_trunc_normal(loc=0., scale=1., l=lower, u=upper)
     w2_sq = torch.einsum('i,i->', trunc_var + (trunc_mean - locs).pow(2), probs)
     return w2_sq.sqrt()

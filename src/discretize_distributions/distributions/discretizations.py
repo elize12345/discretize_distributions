@@ -57,7 +57,7 @@ class DiscretizedMixtureMultivariateNormal(Discretization):
         super().__init__(gmm, probs, locs, w2)
 
 class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
-    def __init__(self, gmm: MixtureMultivariateNormal, grid: Grid, **kwargs):
+    def __init__(self, gmm: MixtureMultivariateNormal, grid: Grid, z_mass: Optional[torch.Tensor] = None, **kwargs):
         assert isinstance(gmm, MixtureMultivariateNormal), 'distribution not of type MixtureMultivariateNormal'
 
         probs_mix = gmm.mixture_distribution.probs
@@ -73,16 +73,16 @@ class DiscretizedMixtureMultivariateNormalQuantization(Discretization):
                 loc=locs_p[p],
                 covariance_matrix=cov_p[p]
             )
-            _, probs_p, w2_p = discretize_multi_norm_dist(component_p, None, grid)
+            _, probs_p, w2_p_squared = discretize_multi_norm_dist(component_p, None, grid, z_mass)
             pi = probs_mix[p]
 
             # left over mass for bounded grids - so mass outside grid
-            z_mass = 1.0 - probs_p.sum()  # so this should be 0 when grid is unbounded
-            z_probs += z_mass * pi  # weighted per component
+            z_mass_p = 1.0 - probs_p.sum()  # so this should be 0 when grid is unbounded
+            z_probs += z_mass_p * pi  # weighted per component
 
             probs += probs_p * pi  # do need it as grid probs are dependent on component mean and std
             # for standardization
-            w2 += w2_p.pow(2) * pi
+            w2 += w2_p_squared * pi
 
         # batched version ?
         # probs_mix = gmm.mixture_distribution.probs   # [num_components,]
