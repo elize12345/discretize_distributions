@@ -33,7 +33,7 @@ def quantization_gmm_shells(gmm, grids, shells, z):
     dim = z.shape[0]
     tot_probs = torch.zeros(1)
     w2_shells = torch.zeros(1)
-    w2_outer = torch.zeros(1)
+    w2_R2 = torch.zeros(1)
     all_locs = []
     all_probs = []
     all_R1_grids = []
@@ -66,23 +66,22 @@ def quantization_gmm_shells(gmm, grids, shells, z):
         all_R1_grids.append(R1_grid)
 
     z_tot_mass = 1 - tot_probs  # total z mass!
+    # error over R^n
+    z_expanded = [z[j].unsqueeze(0) for j in range(dim)]
+    R1_outer = Grid(locs_per_dim=z_expanded)
+    disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer, z_mass=z_tot_mass)
+    w2_outer = disc_R1_outer.w2.pow(2)
 
     for i, (grid, shell) in enumerate(zip(grids, shells)):
-        # z for all dims
-        z_expanded = [z[j].unsqueeze(0) for j in range(dim)]
         R1_inner = Grid(locs_per_dim=z_expanded, bounds=shell)
-        R1_outer = Grid(locs_per_dim=z_expanded)
 
         disc_R1_inner = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_inner, z_mass=z_tot_mass)
-        disc_R1_outer = DiscretizedMixtureMultivariateNormalQuantization(gmm, grid=R1_outer, z_mass=z_tot_mass)
 
         w2_R1_inner = disc_R1_inner.w2
-        w2_R1_outer = disc_R1_outer.w2
 
         # w2_shell = w2_R1 + (w2_R1_outer - w2_R1_inner)
         # total_w2 += w2_shell
-        w2_R2 = (w2_R1_outer.pow(2) - w2_R1_inner.pow(2))  # squared and subtracted
-        w2_outer += w2_R2  # then summed
+        w2_R2 += w2_R1_inner.pow(2)  # squared and subtracted
 
         # print(f"Shell bounds: {shell_input}")
         # print(f"  - W2 error: {w2_shell}")
@@ -93,7 +92,7 @@ def quantization_gmm_shells(gmm, grids, shells, z):
     probs_all = torch.cat([all_probs, z_tot_mass], dim=0)
 
     probs_all = probs_all / probs_all.sum(dim=-1, keepdim=True)
-    total_w2 = (w2_shells + w2_outer).sqrt()  # summed and then sqrt()
+    total_w2 = (w2_shells + w2_outer - w2_R2).sqrt()  # summed and then sqrt()
     print(f'Total W2 error: {total_w2.item()}')
 
     return probs_all, locs_all, total_w2, all_R1_grids
@@ -319,7 +318,7 @@ if __name__ == "__main__":
     )
 
     # original method using signature operator - method 1
-    disc_gmm = dd.discretization_generator(gmm, num_locs=200)
+    disc_gmm = dd.discretization_generator(gmm, num_locs=100)
     locs_gmm = disc_gmm.locs
     probs_gmm = disc_gmm.probs
     print(f'W2 error original Signature operation: {disc_gmm.w2}')
@@ -335,7 +334,7 @@ if __name__ == "__main__":
     # unbounded grid based on optimal locations - method 3
     mean, cov = collapse_into_gaussian(locs, covariance_matrix, probs)
     norm = dd.MultivariateNormal(mean, cov)
-    disc = dd.discretization_generator(norm, num_locs=200)
+    disc = dd.discretization_generator(norm, num_locs=100)
     locs_ = disc.locs
     grid_list = [torch.sort(torch.unique(locs_[:, i]))[0] for i in range(locs_.shape[1])]
     grid = Grid(locs_per_dim=grid_list)
